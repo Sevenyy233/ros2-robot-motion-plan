@@ -1,0 +1,27 @@
+# RTAB-Map specific parameters for 2.5D Mapping and Drift Reduction
+Rtabmap/DetectionRate: "2"
+Rtabmap/TimeThr: "700"
+Rtabmap/MemoryThr: "0"
+
+# Loop Closure
+Kp/DetectorStrategy: "6" # GFTT/FREAK/BRIEF... 6=GFTT+ORB (Visual)
+Kp/MaxFeatures: "400"
+Vis/MinInliers: "20"
+Vis/EstimationType: "1" # 0=3D->3D, 1=3D->2D (PnP)
+
+# Optimization
+Optimizer/Strategy: "1" # 0=TORO, 1=g2o, 2=GTSAM
+Optimizer/Robust: "true"
+Optimizer/PriorsIgnored: "false"
+
+# 2.5D / Grid Map
+Grid/FromDepth: "true"
+Grid/MaxObstacleHeight: "2.0"
+Grid/MinGroundHeight: "0.0" # This helps filtering ground
+Grid/MaxGroundHeight: "0.2" # Points between min/max are ground
+Grid/RayTracing: "true"
+Grid/3D: "true" # Output 3D octomap if needed, but 2D grid is standard
+
+# Reg/Strategy: 0=Vis, 1=Icp, 2=Vis+Icp
+Reg/Strategy: "0" 
+Reg/Force3DoF: "true" # Force 2D SLAM constraints if robot is ground based (reduces z-drift)

@@ -1,0 +1,5 @@
+<library path="nav_25d_layer">
+  <class name="nav_25d/GradientLayer" type="nav_25d::GradientLayer" base_class_type="nav2_costmap_2d::Layer">
+    <description>This is a plugin to detect gradient/slope from pointcloud.</description>
+  </class>
+</library>
