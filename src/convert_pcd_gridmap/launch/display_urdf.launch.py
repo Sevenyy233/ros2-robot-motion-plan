@@ -11,6 +11,7 @@ from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitut
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
+# 显示urdf文件
 def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time', default='false')
 

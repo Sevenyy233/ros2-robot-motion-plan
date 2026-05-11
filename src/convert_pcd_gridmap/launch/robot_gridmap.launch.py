@@ -78,6 +78,5 @@ def generate_launch_description():
         display_robot_launch,
         static_tf_map_to_odom,
         dummy_robot_node,
-        traversability_analysis_node,
         rviz_node
     ])

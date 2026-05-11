@@ -5,6 +5,8 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
+#include <rcl_interfaces/msg/set_parameters_result.hpp>
+using SetParametersResult = rcl_interfaces::msg::SetParametersResult;
 
 class PointCloudToGridMapNode : public rclcpp::Node {
 public:
@@ -20,6 +22,10 @@ public:
             std::bind(&PointCloudToGridMapNode::pointCloudCallback, this, std::placeholders::_1));
             
         pub_ = this->create_publisher<grid_map_msgs::msg::GridMap>("grid_map", 10);
+
+        // parameters_callback_handle_ = this->add_on_set_parameters_callback(
+
+        // )
 
         RCLCPP_INFO(this->get_logger(), "PointCloud2转换GridMap节点启动成功！");
     }
@@ -127,8 +133,8 @@ private:
     }
 
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_;
-    rclcpp::Publisher<grid_map_msgs::msg::GridMap>::SharedPtr pub_;
-
+    rclcpp::Publisher<grid_map_msgs::msg::GridMap>::SharedPtr pub_; 
+    OnSetParametersCallbackHandle::SharedPtr parameters_callback_handle_;
 };
 
 int main(int argc, char** argv) {

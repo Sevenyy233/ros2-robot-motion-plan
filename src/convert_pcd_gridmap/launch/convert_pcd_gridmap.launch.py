@@ -6,6 +6,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
+# 转换pcd文件为gridmap
 def generate_launch_description():
     convert_pcd_gridmap_pkg = get_package_share_directory('convert_pcd_gridmap')
 

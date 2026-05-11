@@ -1,0 +1,417 @@
+import rclpy
+from rclpy.node import Node
+from grid_map_msgs.msg import GridMap
+from nav_msgs.msg import Path
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
+import numpy as np
+import heapq
+import math
+import tf2_ros
+from tf2_geometry_msgs import do_transform_pose
+
+class AStarPlanner(Node):
+    def __init__(self):
+        super().__init__('global_path_planner')
+        
+        # Parameters
+        self.declare_parameter('layer_name', 'elevation')
+        self.declare_parameter('max_elevation', 1.0)  # Max absolute height threshold
+        self.declare_parameter('max_slope_angle', 45.0)  # Max slope angle in degrees
+        self.declare_parameter('treat_nan_as_obstacle', True)
+        self.declare_parameter('use_tf_for_start', True)
+        self.declare_parameter('base_frame', 'base_link')
+        self.declare_parameter('map_frame', 'map')
+        self.declare_parameter('path_z_offset', 0.05)  # Slight offset to prevent Z-fighting in RViz
+        
+        self.layer_name = self.get_parameter('layer_name').value
+        self.max_elevation = self.get_parameter('max_elevation').value
+        self.max_slope_angle = self.get_parameter('max_slope_angle').value
+        self.treat_nan_as_obstacle = self.get_parameter('treat_nan_as_obstacle').value
+        self.use_tf_for_start = self.get_parameter('use_tf_for_start').value
+        self.base_frame = self.get_parameter('base_frame').value
+        self.map_frame = self.get_parameter('map_frame').value
+        self.path_z_offset = self.get_parameter('path_z_offset').value
+        
+        # State
+        self.grid_map = None
+        self.map_data = None
+        self.map_info = None
+        self.start_pose = None
+        self.goal_pose = None
+        
+        # 初始位置获取方式，从TF或/initialpose话题获取
+        if self.use_tf_for_start:
+            self.tf_buffer = tf2_ros.Buffer()
+            self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+            self.timer = self.create_timer(1.0, self.tf_start_pose_callback)
+        else:
+            self.sub_initial_pose = self.create_subscription(
+                PoseWithCovarianceStamped,
+                '/initialpose',
+                self.initial_pose_callback,
+                10)
+            
+        # Subscribers and Publishers
+        self.sub_grid_map = self.create_subscription(
+            GridMap,
+            '/grid_map',
+            self.grid_map_callback,
+            1)
+            
+        self.sub_goal = self.create_subscription(
+            PoseStamped,
+            '/goal_pose',
+            self.goal_callback,
+            10)
+            
+        self.pub_path = self.create_publisher(Path, '/global_path', 10)
+        
+        # Cache for continuous publishing
+        self.current_path_msg = None
+        self.path_pub_timer = self.create_timer(0.5, self.path_pub_timer_callback) # Publish at 2Hz
+        
+        self.get_logger().info("3D A* 全局路径规划器初始化完成")
+
+    def path_pub_timer_callback(self):
+        if self.current_path_msg is not None:
+            # Update timestamp to prevent RViz from fading/discarding old paths
+            self.current_path_msg.header.stamp = self.get_clock().now().to_msg()
+            self.pub_path.publish(self.current_path_msg)
+
+    def tf_start_pose_callback(self):
+        try:
+            trans = self.tf_buffer.lookup_transform(self.map_frame, self.base_frame, rclpy.time.Time())
+            pose = PoseStamped()
+            pose.header.frame_id = self.map_frame
+            pose.header.stamp = self.get_clock().now().to_msg()
+            pose.pose.position.x = trans.transform.translation.x
+            pose.pose.position.y = trans.transform.translation.y
+            pose.pose.position.z = trans.transform.translation.z
+            pose.pose.orientation = trans.transform.rotation
+            
+            if self.start_pose is None:
+                self.get_logger().info(f"从 TF 获取初始起始位姿 ({self.base_frame}): x={pose.pose.position.x:.2f}, y={pose.pose.position.y:.2f}")
+            self.start_pose = pose
+            
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as e:
+            self.get_logger().warn(f"等待 TF 从 {self.map_frame} 到 {self.base_frame}...", throttle_duration_sec=5.0)
+
+    def initial_pose_callback(self, msg):
+        pose = PoseStamped()
+        pose.header = msg.header
+        pose.pose = msg.pose.pose
+        self.start_pose = pose
+        self.get_logger().info(f"已接收初始起始位姿: x={pose.pose.position.x:.2f}, y={pose.pose.position.y:.2f}")
+
+    def goal_callback(self, msg):
+        self.goal_pose = msg
+        self.get_logger().info(f"已接收目标位姿: x={msg.pose.position.x:.2f}, y={msg.pose.position.y:.2f}")
+        self.plan_path()
+
+    def grid_map_callback(self, msg):
+        try:
+            layer_idx = msg.layers.index(self.layer_name)
+        except ValueError:
+            self.get_logger().warn(f"在 GridMap 中未找到层 '{self.layer_name}'", throttle_duration_sec=5.0)
+            return
+            
+        self.map_info = msg.info
+        
+        # Extract data
+        multi_array = msg.data[layer_idx]
+        
+        # Use layout dimensions if available
+        size_x = int(round(self.map_info.length_x / self.map_info.resolution))
+        size_y = int(round(self.map_info.length_y / self.map_info.resolution))
+        
+        if len(multi_array.layout.dim) >= 2:
+            for dim in multi_array.layout.dim:
+                if dim.label == 'column_index':
+                    size_y = dim.size
+                elif dim.label == 'row_index':
+                    size_x = dim.size
+        
+        if len(multi_array.data) != size_x * size_y:
+            self.get_logger().warn(f"GridMap 数据大小不匹配。预期大小： {size_x * size_y}, 实际大小： {len(multi_array.data)}")
+            return
+            
+        # GridMap stores data in column-major order (Eigen default)
+        # Using order='F' (Fortran-like) ensures X (rows) varies first, then Y (cols)
+        self.map_data = np.array(multi_array.data, dtype=np.float32).reshape((size_x, size_y), order='F')
+        
+    def position_to_index(self, x, y):
+        if self.map_info is None:
+            return None
+        res = self.map_info.resolution
+        center_x = self.map_info.pose.position.x
+        center_y = self.map_info.pose.position.y
+        length_x = self.map_info.length_x
+        length_y = self.map_info.length_y
+        
+        max_x = center_x + length_x / 2.0
+        max_y = center_y + length_y / 2.0
+        
+        idx_x = int((max_x - x) / res)
+        idx_y = int((max_y - y) / res)
+        
+        return (idx_x, idx_y)
+        
+    def index_to_position(self, idx_x, idx_y):
+        if self.map_info is None:
+            return None
+        res = self.map_info.resolution
+        center_x = self.map_info.pose.position.x
+        center_y = self.map_info.pose.position.y
+        length_x = self.map_info.length_x
+        length_y = self.map_info.length_y
+        
+        max_x = center_x + length_x / 2.0
+        max_y = center_y + length_y / 2.0
+        
+        x = max_x - (idx_x + 0.5) * res
+        y = max_y - (idx_y + 0.5) * res
+        
+        return (x, y)
+        
+    def is_valid_index(self, idx_x, idx_y):
+        if self.map_data is None:
+            return False
+        return 0 <= idx_x < self.map_data.shape[0] and 0 <= idx_y < self.map_data.shape[1]
+        
+    def is_obstacle(self, idx_x, idx_y):
+        val = self.map_data[idx_x, idx_y]
+        if np.isnan(val):
+            return self.treat_nan_as_obstacle
+        return val > self.max_elevation
+
+    def is_valid_move(self, curr_idx, next_idx):
+        # 获取当前点的z值
+        val_curr = self.map_data[curr_idx[0], curr_idx[1]]
+        # 获取下一个点的z值
+        val_next = self.map_data[next_idx[0], next_idx[1]]
+        
+        if np.isnan(val_curr) or np.isnan(val_next):
+            return not self.treat_nan_as_obstacle
+            
+        # 计算高度差
+        dz = abs(val_next - val_curr)
+        
+        # Calculate 2D distance
+        dx = next_idx[0] - curr_idx[0]
+        dy = next_idx[1] - curr_idx[1]
+        d_grid = math.hypot(dx, dy)
+        d_meters = d_grid * self.map_info.resolution
+        
+        if d_meters == 0:
+            return True
+            
+        # Calculate slope angle in degrees
+        slope_angle = math.degrees(math.atan2(dz, d_meters))
+        
+        return slope_angle <= self.max_slope_angle
+
+    def heuristic(self, a_idx, b_idx):
+        # 3D Euclidean distance heuristic
+        # 节点 A 的 Z 坐标值
+        a_z = self.map_data[a_idx[0], a_idx[1]]
+        # 节点 B 的 Z 坐标值
+        b_z = self.map_data[b_idx[0], b_idx[1]]
+        
+        if np.isnan(a_z): a_z = 0.0
+        if np.isnan(b_z): b_z = 0.0
+        
+        d_grid = math.hypot(a_idx[0] - b_idx[0], a_idx[1] - b_idx[1])
+        d_meters = d_grid * self.map_info.resolution
+        dz = abs(a_z - b_z)
+        
+        return math.hypot(d_meters, dz)
+
+    def plan_path(self):
+        if self.map_data is None:
+            self.get_logger().warn("无法进行全局路径规划：地图数据未接收！")
+            return
+        if self.start_pose is None:
+            self.get_logger().warn("无法进行全局路径规划：起始点未接收！")
+            return
+        if self.goal_pose is None:
+            self.get_logger().warn("无法进行全局路径规划：目标点未接收！")
+            return
+            
+        start_x = self.start_pose.pose.position.x
+        start_y = self.start_pose.pose.position.y
+        goal_x = self.goal_pose.pose.position.x
+        goal_y = self.goal_pose.pose.position.y
+        
+        start_idx = self.position_to_index(start_x, start_y)
+        goal_idx = self.position_to_index(goal_x, goal_y)
+        
+        if not self.is_valid_index(*start_idx):
+            self.get_logger().warn("无法进行全局路径规划：起始点超出地图范围！")
+            return
+        if not self.is_valid_index(*goal_idx):
+            self.get_logger().warn("无法进行全局路径规划：目标点超出地图范围！")
+            return
+            
+        if self.is_obstacle(*start_idx):
+            self.get_logger().warn(f"无法进行全局路径规划：起始点在障碍物或高度过高！(Z={self.map_data[start_idx[0], start_idx[1]]:.2f})")
+            return
+            
+        if self.is_obstacle(*goal_idx):
+            self.get_logger().warn(f"无法进行全局路径规划：目标点存在障碍物或高度过高！(Z={self.map_data[goal_idx[0], goal_idx[1]]:.2f})")
+            return
+            
+        self.get_logger().info(f"开始全局路径规划：从{start_idx} 到{goal_idx}...")
+        
+        # A* algorithm
+        neighbors = [(0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)]
+        
+        frontier = []
+        heapq.heappush(frontier, (0, start_idx))
+        
+        came_from = {}
+        cost_so_far = {}
+        
+        came_from[start_idx] = None
+        cost_so_far[start_idx] = 0.0
+        
+        path_found = False
+        
+        while frontier:
+            _, current = heapq.heappop(frontier)
+            
+            if current == goal_idx:
+                path_found = True
+                break
+                
+            for dx, dy in neighbors:
+                next_idx = (current[0] + dx, current[1] + dy)
+                
+                if not self.is_valid_index(*next_idx):
+                    continue
+                if self.is_obstacle(*next_idx):
+                    continue
+                if not self.is_valid_move(current, next_idx):
+                    continue
+                    
+                # Calculate 3D move cost
+                val_curr = self.map_data[current[0], current[1]]
+                val_next = self.map_data[next_idx[0], next_idx[1]]
+                
+                dz = abs(val_next - val_curr) if not (np.isnan(val_curr) or np.isnan(val_next)) else 0.0
+                d_grid = math.hypot(dx, dy)
+                d_meters = d_grid * self.map_info.resolution
+                move_cost = math.hypot(d_meters, dz)
+                
+                new_cost = cost_so_far[current] + move_cost
+                
+                if next_idx not in cost_so_far or new_cost < cost_so_far[next_idx]:
+                    cost_so_far[next_idx] = new_cost
+                    priority = new_cost + self.heuristic(next_idx, goal_idx)
+                    heapq.heappush(frontier, (priority, next_idx))
+                    came_from[next_idx] = current
+                    
+        if not path_found:
+            self.get_logger().warn("A* 算法寻找路径失败！目标点由于坡度或高度约束而不可达！")
+            return
+            
+        # Reconstruct path
+        current = goal_idx
+        path_indices = []
+        while current is not None:
+            path_indices.append(current)
+            current = came_from[current]
+        path_indices.reverse()
+        
+        # Smooth the path
+        smoothed_path = self.smooth_path(path_indices, weight_data=0.5, weight_smooth=0.2)
+        
+        self.publish_path(smoothed_path)
+        
+    def smooth_path(self, path_indices, weight_data=0.5, weight_smooth=0.1, tolerance=0.000001):
+        """Smooth the generated path using gradient descent."""
+        if len(path_indices) <= 2:
+            return path_indices
+
+        # Convert indices to continuous coordinates for smoothing
+        smoothed = []
+        for idx in path_indices:
+            smoothed.append(list(idx))
+            
+        change = tolerance
+        while change >= tolerance:
+            change = 0.0
+            for i in range(1, len(path_indices) - 1):
+                for j in range(2): # x and y
+                    aux = smoothed[i][j]
+                    smoothed[i][j] += weight_data * (path_indices[i][j] - smoothed[i][j]) + \
+                                      weight_smooth * (smoothed[i-1][j] + smoothed[i+1][j] - (2.0 * smoothed[i][j]))
+                    change += abs(aux - smoothed[i][j])
+                    
+        return smoothed
+
+    def yaw_to_quaternion(self, yaw):
+        """Convert a yaw angle to a geometry_msgs Quaternion"""
+        q = PoseStamped().pose.orientation
+        q.x = 0.0
+        q.y = 0.0
+        q.z = math.sin(yaw / 2.0)
+        q.w = math.cos(yaw / 2.0)
+        return q
+
+    def publish_path(self, path_indices):
+        path_msg = Path()
+        path_msg.header.frame_id = self.map_frame
+        path_msg.header.stamp = self.get_clock().now().to_msg()
+        
+        # Pre-compute positions
+        positions = []
+        for idx in path_indices:
+            # path_indices might be float due to smoothing, so interpolate position
+            # using the base logic:
+            x, y = self.index_to_position(idx[0], idx[1])
+            
+            # Fetch valid Z from map data by using the nearest integer index
+            int_idx_x, int_idx_y = int(round(idx[0])), int(round(idx[1]))
+            # Bound check for integer indices
+            int_idx_x = max(0, min(int_idx_x, self.map_data.shape[0] - 1))
+            int_idx_y = max(0, min(int_idx_y, self.map_data.shape[1] - 1))
+            
+            val = self.map_data[int_idx_x, int_idx_y]
+            z = float(val) + self.path_z_offset if not np.isnan(val) else self.path_z_offset
+            positions.append((float(x), float(y), float(z)))
+        
+        for i, (x, y, z) in enumerate(positions):
+            pose = PoseStamped()
+            pose.header = path_msg.header
+            pose.pose.position.x = x
+            pose.pose.position.y = y
+            pose.pose.position.z = z
+            
+            # Calculate orientation based on path direction
+            if i < len(positions) - 1:
+                # Point towards the next node
+                next_x, next_y, _ = positions[i + 1]
+                yaw = math.atan2(next_y - y, next_x - x)
+                pose.pose.orientation = self.yaw_to_quaternion(yaw)
+            else:
+                # Last node: Use the exact orientation from the goal pose
+                if self.goal_pose is not None:
+                    pose.pose.orientation = self.goal_pose.pose.orientation
+                else:
+                    pose.pose.orientation.w = 1.0
+                    
+            path_msg.poses.append(pose)
+            
+        self.current_path_msg = path_msg
+        self.pub_path.publish(path_msg)
+        self.get_logger().info(f"已发布全局路径，包含{len(path_msg.poses)}个点")
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = AStarPlanner()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
