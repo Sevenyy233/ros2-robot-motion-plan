@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'traversability_analysis'
+package_name = 'local_path_planner'
 
 setup(
     name=package_name,
@@ -24,7 +24,6 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'traversability_node = traversability_analysis.traversability_node:main',
         ],
     },
 )

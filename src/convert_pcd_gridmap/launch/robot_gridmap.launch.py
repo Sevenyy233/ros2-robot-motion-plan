@@ -56,13 +56,6 @@ def generate_launch_description():
         output="screen",
     )
 
-    traversability_analysis_node = Node(
-        package="traversability_analysis",
-        executable="traversability_node",
-        name="traversability_node",
-        output="screen",
-    )
-
     rviz_node = Node(
         package="rviz2",
         executable="rviz2",

@@ -25,7 +25,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'planner_node = global_path_planner.planner_node:main',
+            'global_planner_node = global_path_planner.global_planner_node:main',
         ],
     },
 )

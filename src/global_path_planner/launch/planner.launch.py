@@ -33,7 +33,7 @@ def generate_launch_description():
 
     planner_node = Node(
         package='global_path_planner',
-        executable='planner_node',
+        executable='global_planner_node',
         name='global_path_planner',
         output='screen',
         parameters=[{

@@ -80,7 +80,7 @@ def generate_launch_description():
     )
 
     odom_tf_broadcaster = Node(
-        package='nav_25d',
+        package='odom_tf_broadcaster',
         executable='odom_tf_broadcaster',
         output='screen',
         parameters=[{'use_sim_time': use_sim_time}]
