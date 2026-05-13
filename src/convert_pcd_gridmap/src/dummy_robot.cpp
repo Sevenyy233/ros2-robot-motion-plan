@@ -1,5 +1,5 @@
 #include <rclcpp/rclcpp.hpp>
-#include <geometry_msgs/msg/twist.hpp>
+#include <geometry_msgs/msg/twist_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2/LinearMath/Quaternion.h>
@@ -12,7 +12,7 @@ class DummyRobot : public rclcpp::Node
 public:
     DummyRobot() : Node("dummy_robot"), x_(0.0), y_(0.0), z_(0.0), roll_(0.0), pitch_(0.0), theta_(0.0)
     {
-        cmd_vel_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
+        cmd_vel_sub_ = this->create_subscription<geometry_msgs::msg::TwistStamped>(
             "cmd_vel", 10, std::bind(&DummyRobot::cmdVelCallback,
                 this, std::placeholders::_1));
         
@@ -47,9 +47,9 @@ private:
         return default_z;
     }
 
-    void cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
+    void cmdVelCallback(const geometry_msgs::msg::TwistStamped::SharedPtr msg)
     {
-        current_vel_ = *msg;
+        current_vel_ = msg->twist;
     }
 
     void update()
@@ -128,7 +128,7 @@ private:
         odom_pub_->publish(odom);
     }
 
-    rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
+    rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr cmd_vel_sub_;
     rclcpp::Subscription<grid_map_msgs::msg::GridMap>::SharedPtr grid_map_sub_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
     std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
