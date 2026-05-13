@@ -1,0 +1,25 @@
+# 请求(Request)
+builtin_interfaces/Time request_time    # 请求发起时间
+geometry_msgs/PoseStamped goal_pose     # 目标点位姿(位置+姿态)
+
+---
+# 返回结果(Result)
+bool success                            # 是否规划成功到达目标点
+int32 error_code                        # 错误码(0:成功, 1:全局规划失败,2:局部规划失败,3:超时) 
+string message                          # 详细的错误或者提示信息
+builtin_interfaces/Time finish_time     # 规划完成的实际时间
+
+---
+# (FeedBack)规划过程中的机器人状态
+# 状态阶段枚举
+uint8 STAGE_IDLE = 0
+uint8 STAGE_GLOBAL_PLANNING = 1
+uint8 STAGE_LOCAL_PLANNING = 2
+uint8 STAGE_TRAJECTORY_PLANNING = 3
+uint8 STAGE_MOVING = 4
+uint8 current_stage
+
+builtin_interfaces/Time current_time            # 当前反馈时间
+custom_motion_plan_msgs/RobotInfo robot_info    # 机器人当前状态(位置、速度)
+float32 completion_ratio                        # 总体路径完成百分比(0.0-1.0)
+float32 distance_remaining                      # 距离目标点的剩余物理距离
