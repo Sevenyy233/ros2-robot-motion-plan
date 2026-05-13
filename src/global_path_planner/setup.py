@@ -27,6 +27,7 @@ setup(
     entry_points={
         'console_scripts': [
             'global_planner_node = global_path_planner.global_planner_node:main',
+            'send_goal_client = global_path_planner.send_goal_client:main',
         ],
     },
 )

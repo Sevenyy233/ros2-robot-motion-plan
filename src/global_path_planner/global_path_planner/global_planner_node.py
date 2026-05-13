@@ -1,5 +1,6 @@
 import rclpy
 from rclpy.node import Node
+from rclpy.action import ActionServer
 from grid_map_msgs.msg import GridMap
 from nav_msgs.msg import Path
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
@@ -7,7 +8,7 @@ import numpy as np
 import heapq
 import math
 import tf2_ros
-from tf2_geometry_msgs import do_transform_pose
+from custom_motion_plan_msgs.action import SendGoal
 
 class AStarPlanner(Node):
     def __init__(self):
@@ -70,6 +71,13 @@ class AStarPlanner(Node):
         self.current_path_msg = None
         self.path_pub_timer = self.create_timer(0.5, self.path_pub_timer_callback) # Publish at 2Hz
         
+        self.send_goal_server = ActionServer(
+            self,
+            SendGoal,
+            "/goal_check",
+            self.send_goal_callback
+        )
+
         self.get_logger().info("3D A* 全局路径规划器初始化完成")
 
     def path_pub_timer_callback(self):
@@ -107,6 +115,41 @@ class AStarPlanner(Node):
         self.goal_pose = msg
         self.get_logger().info(f"已接收目标位姿: x={msg.pose.position.x:.2f}, y={msg.pose.position.y:.2f}")
         self.plan_path()
+
+    def send_goal_callback(self, goal_handle):
+        self.get_logger().info("接收到新的全局路径规划请求(Action)...")
+        
+        request = goal_handle.request
+        self.goal_pose = request.goal_pose
+        self.get_logger().info(f"Action已接收目标位姿: x={self.goal_pose.pose.position.x:.2f}, y={self.goal_pose.pose.position.y:.2f}")
+        
+        # 发布开始规划时的反馈
+        feedback_msg = SendGoal.Feedback()
+        feedback_msg.current_stage = 1  # STAGE_GLOBAL_PLANNING
+        feedback_msg.current_time = self.get_clock().now().to_msg()
+        feedback_msg.completion_ratio = 0.0
+        feedback_msg.distance_remaining = 0.0
+        goal_handle.publish_feedback(feedback_msg)
+        
+        success, error_code, message = self.plan_path()
+        
+        # 规划完成，再次发布反馈更新状态
+        feedback_msg.current_time = self.get_clock().now().to_msg()
+        feedback_msg.completion_ratio = 1.0 if success else 0.0
+        goal_handle.publish_feedback(feedback_msg)
+        
+        result = SendGoal.Result()
+        result.success = success
+        result.error_code = error_code
+        result.message = message
+        result.finish_time = self.get_clock().now().to_msg()
+        
+        if success:
+            goal_handle.succeed()
+        else:
+            goal_handle.abort()
+            
+        return result
 
     def grid_map_callback(self, msg):
         try:
@@ -228,14 +271,17 @@ class AStarPlanner(Node):
 
     def plan_path(self):
         if self.map_data is None:
-            self.get_logger().warn("无法进行全局路径规划：地图数据未接收！")
-            return
+            msg = "无法进行全局路径规划：地图数据未接收！"
+            self.get_logger().warn(msg)
+            return False, 1, msg
         if self.start_pose is None:
-            self.get_logger().warn("无法进行全局路径规划：起始点未接收！")
-            return
+            msg = "无法进行全局路径规划：起始点未接收！"
+            self.get_logger().warn(msg)
+            return False, 1, msg
         if self.goal_pose is None:
-            self.get_logger().warn("无法进行全局路径规划：目标点未接收！")
-            return
+            msg = "无法进行全局路径规划：目标点未接收！"
+            self.get_logger().warn(msg)
+            return False, 1, msg
             
         start_x = self.start_pose.pose.position.x
         start_y = self.start_pose.pose.position.y
@@ -246,21 +292,27 @@ class AStarPlanner(Node):
         goal_idx = self.position_to_index(goal_x, goal_y)
         
         if not self.is_valid_index(*start_idx):
-            self.get_logger().warn("无法进行全局路径规划：起始点超出地图范围！")
-            return
+            msg = "无法进行全局路径规划：起始点超出地图范围！"
+            self.get_logger().warn(msg)
+            return False, 1, msg
         if not self.is_valid_index(*goal_idx):
-            self.get_logger().warn("无法进行全局路径规划：目标点超出地图范围！")
-            return
+            msg = "无法进行全局路径规划：目标点超出地图范围！"
+            self.get_logger().warn(msg)
+            return False, 1, msg
             
         if self.is_obstacle(*start_idx):
-            self.get_logger().warn(f"无法进行全局路径规划：起始点在障碍物或高度过高！(Z={self.map_data[start_idx[0], start_idx[1]]:.2f})")
-            return
+            msg = f"无法进行全局路径规划：起始点在障碍物或高度过高！(Z={self.map_data[start_idx[0], start_idx[1]]:.2f})"
+            self.get_logger().warn(msg)
+            return False, 1, msg
             
         if self.is_obstacle(*goal_idx):
-            self.get_logger().warn(f"无法进行全局路径规划：目标点存在障碍物或高度过高！(Z={self.map_data[goal_idx[0], goal_idx[1]]:.2f})")
-            return
+            msg = f"无法进行全局路径规划：目标点存在障碍物或高度过高！(Z={self.map_data[goal_idx[0], goal_idx[1]]:.2f})"
+            self.get_logger().warn(msg)
+            return False, 1, msg
             
         self.get_logger().info(f"开始全局路径规划：从{start_idx} 到{goal_idx}...")
+        
+        start_time = self.get_clock().now()
         
         # A* algorithm
         neighbors = [(0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)]
@@ -311,8 +363,11 @@ class AStarPlanner(Node):
                     came_from[next_idx] = current
                     
         if not path_found:
-            self.get_logger().warn("A* 算法寻找路径失败！目标点由于坡度或高度约束而不可达！")
-            return
+            end_time = self.get_clock().now()
+            duration = (end_time - start_time).nanoseconds / 1e9
+            msg = f"A* 算法寻找路径失败！目标点由于坡度或高度约束而不可达！耗时: {duration:.4f} 秒"
+            self.get_logger().warn(msg)
+            return False, 1, msg
             
         # Reconstruct path
         current = goal_idx
@@ -325,7 +380,13 @@ class AStarPlanner(Node):
         # Smooth the path
         smoothed_path = self.smooth_path(path_indices, weight_data=0.5, weight_smooth=0.2)
         
+        end_time = self.get_clock().now()
+        duration = (end_time - start_time).nanoseconds / 1e9
+        msg = f"全局路径规划计算完成，耗时: {duration:.4f} 秒"
+        self.get_logger().info(msg)
+        
         self.publish_path(smoothed_path)
+        return True, 0, msg
         
     def smooth_path(self, path_indices, weight_data=0.5, weight_smooth=0.1, tolerance=0.000001):
         """Smooth the generated path using gradient descent."""
@@ -403,8 +464,8 @@ class AStarPlanner(Node):
             path_msg.poses.append(pose)
             
         self.current_path_msg = path_msg
-        self.pub_path.publish(path_msg)
         self.get_logger().info(f"已发布全局路径，包含{len(path_msg.poses)}个点")
+        self.pub_path.publish(path_msg)
 
 def main(args=None):
     rclpy.init(args=args)
