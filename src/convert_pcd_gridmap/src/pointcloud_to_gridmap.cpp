@@ -18,7 +18,7 @@ public:
 
         // Subscribers and Publishers
         sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-            "my_points", 10,
+            "map_points", 10,
             std::bind(&PointCloudToGridMapNode::pointCloudCallback, this, std::placeholders::_1));
             
         pub_ = this->create_publisher<grid_map_msgs::msg::GridMap>("grid_map", 10);

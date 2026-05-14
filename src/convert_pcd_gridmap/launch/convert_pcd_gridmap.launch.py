@@ -23,7 +23,7 @@ def generate_launch_description():
             {"file_name":pcd_file},
         ],
         remappings=[
-            ("cloud_pcd", "my_points")
+            ("cloud_pcd", "map_points")
         ]
     )
 
