@@ -2,17 +2,11 @@ import rclpy
 from rclpy.node import Node
 from grid_map_msgs.msg import GridMap
 from nav_msgs.msg import Path
-from geometry_msgs.msg import PoseStamped, Twist, TwistStamped
-from trajectory_msgs.msg import JointTrajectory
+from geometry_msgs.msg import PoseStamped, TwistStamped
+from custom_motion_plan_msgs.msg import RobotTrajectory
 import tf2_ros
 import math
 import numpy as np
-
-# 1、从global_path_planner订阅全局路径
-# 2、根据全局路径和当前位姿，计算局部路径
-# 3、发布局部路径/local_path
-# 4、根据局部路径，计算速度命令
-# 5、发布速度命令
 
 class LocalPlannerNode(Node):
     def __init__(self):

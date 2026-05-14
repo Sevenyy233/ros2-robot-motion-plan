@@ -12,10 +12,10 @@ find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(trajectory_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
-find_package(custom_trajectory_msgs REQUIRED)
+find_package(custom_motion_plan_msgs REQUIRED)
 
 add_executable(trajectory_planner src/trajectory_planner.cpp)
-ament_target_dependencies(trajectory_planner rclcpp geometry_msgs nav_msgs custom_trajectory_msgs)
+ament_target_dependencies(trajectory_planner rclcpp geometry_msgs nav_msgs custom_motion_plan_msgs)
 
 install(TARGETS trajectory_planner
   DESTINATION lib/${PROJECT_NAME}

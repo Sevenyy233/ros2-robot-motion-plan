@@ -14,7 +14,7 @@
   <depend>nav_msgs</depend>
   <depend>trajectory_msgs</depend>
   <depend>tf2_ros</depend>
-  <depend>custom_trajectory_msgs</depend>
+  <depend>custom_motion_plan_msgs</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

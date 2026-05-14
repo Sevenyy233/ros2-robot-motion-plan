@@ -4,7 +4,9 @@
 #include <string>
 #include <nav_msgs/msg/path.hpp>
 #include <geometry_msgs/msg/twist_stamped.hpp>
-#include "custom_trajectory_msgs/msg/robot_trajectory.hpp"
+#include "custom_motion_plan_msgs/msg/robot_trajectory.hpp"
+
+// 订阅局部路/local_path并根据速度指令计算轨迹
 
 namespace trajectory_planner
 {
@@ -24,11 +26,13 @@ public:
             std::bind(&TrajectoryPlanner::twist_callback, this, std::placeholders::_1)
         );
 
-        trajectory_pub_ = this->create_publisher<custom_trajectory_msgs::msg::RobotTrajectory>(
+        trajectory_pub_ = this->create_publisher<custom_motion_plan_msgs::msg::RobotTrajectory>(
             "/robot_trajectory",
             10
         );
 
+        
+    
         RCLCPP_INFO(this->get_logger(), "轨迹规划器初始化成功！");
     }
 
@@ -48,7 +52,7 @@ private:
 
     }
 
-    void publish_trajectory(const custom_trajectory_msgs::msg::RobotTrajectory::SharedPtr msg)
+    void publish_trajectory(const custom_motion_plan_msgs::msg::RobotTrajectory::SharedPtr msg)
     {
 
     }
@@ -58,7 +62,7 @@ private:
     rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr local_path_sub_;
     rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr twist_sub_;
     // 发布轨迹
-    rclcpp::Publisher<custom_trajectory_msgs::msg::RobotTrajectory>::SharedPtr trajectory_pub_;
+    rclcpp::Publisher<custom_motion_plan_msgs::msg::RobotTrajectory>::SharedPtr trajectory_pub_;
     // 
 };
 }
