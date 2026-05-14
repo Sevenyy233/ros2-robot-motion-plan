@@ -223,6 +223,98 @@
     </sensor>
   </gazebo>
 
+  <!-- ==================== 3D LiDAR Sensors (local path planning) ==================== -->
+  <!--
+    5个3D激光雷达，发布PointCloud2，用于局部路径规划的障碍物检测
+    命名：lidar_1(后)、lidar_2(左)、lidar_3(前左)、lidar_4(前右)、lidar_5(右)
+    每个雷达水平扫描180°(±90°)、垂直扫描±15°，仅覆盖其朝向方向
+    朝向：机器人 +X 为前方
+  -->
+  <xacro:macro name="lidar_3d_fov" params="prefix x y z yaw">
+    <link name="${prefix}_link">
+      <visual>
+        <geometry>
+          <cylinder radius="0.03" length="0.05"/>
+        </geometry>
+        <material name="${prefix}_color">
+          <color rgba="0.9 0.1 0.1 1.0"/>
+        </material>
+      </visual>
+      <collision>
+        <geometry>
+          <cylinder radius="0.03" length="0.05"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <mass value="0.05"/>
+        <inertia ixx="0.00001" ixy="0" ixz="0" iyy="0.00001" iyz="0" izz="0.00001"/>
+      </inertial>
+    </link>
+
+    <joint name="${prefix}_joint" type="fixed">
+      <parent link="base_link"/>
+      <child link="${prefix}_link"/>
+      <origin xyz="${x} ${y} ${z}" rpy="0 0 ${yaw}"/>
+    </joint>
+
+    <gazebo reference="${prefix}_link">
+      <material>Gazebo/Red</material>
+      <sensor type="ray" name="${prefix}_sensor">
+        <pose>0 0 0 0 0 0</pose>
+        <visualize>false</visualize>
+        <update_rate>10</update_rate>
+        <ray>
+          <scan>
+            <horizontal>
+              <samples>180</samples>
+              <resolution>1</resolution>
+              <min_angle>${-PI/2}</min_angle>
+              <max_angle>${PI/2}</max_angle>
+            </horizontal>
+            <vertical>
+              <samples>8</samples>
+              <resolution>1</resolution>
+              <min_angle>${-15.0*PI/180.0}</min_angle>
+              <max_angle>${15.0*PI/180.0}</max_angle>
+            </vertical>
+          </scan>
+          <range>
+            <min>0.1</min>
+            <max>30.0</max>
+            <resolution>0.01</resolution>
+          </range>
+          <noise>
+            <type>gaussian</type>
+            <mean>0.0</mean>
+            <stddev>0.005</stddev>
+          </noise>
+        </ray>
+        <plugin name="${prefix}_plugin" filename="libgazebo_ros_ray_sensor.so">
+          <ros>
+            <remapping>~/out:=${prefix}/points</remapping>
+          </ros>
+          <output_type>sensor_msgs/PointCloud2</output_type>
+          <frame_name>${prefix}_link</frame_name>
+        </plugin>
+      </sensor>
+    </gazebo>
+  </xacro:macro>
+
+  <!-- lidar_1: 后, 朝向:后方(-X), 水平180°覆盖后方 -->
+  <xacro:lidar_3d_fov prefix="lidar_1" x="${-chassis_length/2}" y="0" z="${chassis_height/2}" yaw="${PI}"/>
+
+  <!-- lidar_2: 左, 朝向:左侧(+Y), 水平180°覆盖左侧 -->
+  <xacro:lidar_3d_fov prefix="lidar_2" x="0" y="${chassis_width/2}" z="${chassis_height/2}" yaw="${PI/2}"/>
+
+  <!-- lidar_3: 前左, 朝向:前左(45°), 水平180°覆盖前方偏左区域 -->
+  <xacro:lidar_3d_fov prefix="lidar_3" x="${chassis_length/2}" y="${chassis_width/4}" z="${chassis_height/2}" yaw="${PI/4}"/>
+
+  <!-- lidar_4: 前右, 朝向:前右(-45°), 水平180°覆盖前方偏右区域 -->
+  <xacro:lidar_3d_fov prefix="lidar_4" x="${chassis_length/2}" y="${-chassis_width/4}" z="${chassis_height/2}" yaw="${-PI/4}"/>
+
+  <!-- lidar_5: 右, 朝向:右侧(-Y), 水平180°覆盖右侧 -->
+  <xacro:lidar_3d_fov prefix="lidar_5" x="0" y="${-chassis_width/2}" z="${chassis_height/2}" yaw="${-PI/2}"/>
+
   <!-- IMU -->
   <link name="imu_link">
     <inertial>
