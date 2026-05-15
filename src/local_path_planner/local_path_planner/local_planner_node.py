@@ -28,7 +28,7 @@ class LocalPlannerNode(Node):
         self.declare_parameter("max_angular_speed", 1.0)
         self.declare_parameter("goal_tolerance", 0.15)
         self.declare_parameter("control_rate", 20.0)
-        self.declare_parameter("local_path_lookahead", 5.0)
+        self.declare_parameter("local_path_lookahead", 3.0)
 
         self.layer_name = self.get_parameter("layer_name").value
         self.max_slope_angle = self.get_parameter("max_slope_angle").value
