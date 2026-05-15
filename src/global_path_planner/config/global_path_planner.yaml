@@ -1,0 +1,28 @@
+# ============================================================
+# 公共参数 — 所有加载此 YAML 的节点都会继承
+# ============================================================
+/**:
+  ros__parameters:
+    map_frame: "map"
+    base_frame: "base_link"
+
+# ============================================================
+# global_path_planner — 3D A* 全局路径规划器
+# ============================================================
+global_path_planner:
+  ros__parameters:
+    layer_name: "elevation"
+    max_elevation: 1.0
+    max_slope_angle: 45.0
+    treat_nan_as_obstacle: True
+    use_tf_for_start: True
+    path_z_offset: 0.05
+
+# ============================================================
+# 示例：新规划器节点（取消注释即可使用）
+# ============================================================
+# biastar_planner:
+#   ros__parameters:
+#     layer_name: "elevation"
+#     max_elevation: 1.0
+#     heuristic_weight: 1.2

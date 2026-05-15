@@ -1,57 +1,19 @@
 import os
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from ament_index_python.packages import get_package_share_directory
+
 
 def generate_launch_description():
-    # Declare arguments
-    layer_name_arg = DeclareLaunchArgument(
-        'layer_name', default_value='elevation',
-        description='Layer name in GridMap to use for obstacle checking'
-    )
-    
-    max_elevation_arg = DeclareLaunchArgument(
-        'max_elevation', default_value='1.0',
-        description='Threshold above which absolute elevation is considered an obstacle'
-    )
-    
-    max_slope_angle_arg = DeclareLaunchArgument(
-        'max_slope_angle', default_value='45.0',
-        description='Maximum traversable slope angle in degrees'
-    )
-    
-    treat_nan_as_obstacle_arg = DeclareLaunchArgument(
-        'treat_nan_as_obstacle', default_value='True',
-        description='Whether to treat NaN cells as obstacles'
-    )
-    
-    use_tf_for_start_arg = DeclareLaunchArgument(
-        'use_tf_for_start', default_value='True',
-        description='Use TF map->base_link instead of /initialpose for start pose'
-    )
+    pkg_share = get_package_share_directory("global_path_planner")
+    config_path = os.path.join(pkg_share, "config", "global_path_planner.yaml")
 
     planner_node = Node(
-        package='global_path_planner',
-        executable='global_planner_node',
-        name='global_path_planner',
-        output='screen',
-        parameters=[{
-            'layer_name': LaunchConfiguration('layer_name'),
-            'max_elevation': LaunchConfiguration('max_elevation'),
-            'max_slope_angle': LaunchConfiguration('max_slope_angle'),
-            'treat_nan_as_obstacle': LaunchConfiguration('treat_nan_as_obstacle'),
-            'use_tf_for_start': LaunchConfiguration('use_tf_for_start'),
-            'base_frame': 'base_link',
-            'map_frame': 'map'
-        }]
+        package="global_path_planner",
+        executable="global_planner_node",
+        name="global_path_planner",
+        output="screen",
+        parameters=[config_path],
     )
 
-    return LaunchDescription([
-        layer_name_arg,
-        max_elevation_arg,
-        max_slope_angle_arg,
-        treat_nan_as_obstacle_arg,
-        use_tf_for_start_arg,
-        planner_node
-    ])
+    return LaunchDescription([planner_node])
