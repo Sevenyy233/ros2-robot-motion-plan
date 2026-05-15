@@ -48,5 +48,10 @@ class TrackVelocityPublisher(Node):
         self.left_track_vel = TwistStamped()
         self.right_track_vel = TwistStamped()
 
+def main():
+    rclpy.init()
+    node = TrackVelocityPublisher()
+    
+
         
         
