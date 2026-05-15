@@ -7,6 +7,9 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
+#include <unordered_set>
+#include <vector>
+#include <cmath>
 
 class PointCloudToOctomapNode : public rclcpp::Node {
 public:
@@ -17,6 +20,7 @@ public:
         this->declare_parameter<double>("prob_miss", 0.4);
         this->declare_parameter<double>("thres_min", 0.12);
         this->declare_parameter<double>("thres_max", 0.97);
+        this->declare_parameter<int>("hole_filling_radius", 1);
 
         // Subscribers and Publishers
         sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -61,6 +65,10 @@ private:
             tree.updateNode(octomap::point3d(point.x, point.y, point.z), true);
         }
 
+        // Fill holes in the octomap
+        int hole_filling_radius = this->get_parameter("hole_filling_radius").as_int();
+        fillHoles(tree, hole_filling_radius);
+
         // Update inner occupancy values
         tree.updateInnerOccupancy();
 
@@ -75,6 +83,75 @@ private:
         } else {
             RCLCPP_ERROR(this->get_logger(), "Octomap转换为ROS消息失败！");
         }
+    }
+
+    void fillHoles(octomap::OcTree& tree, int radius) {
+        if (radius <= 0) return;
+
+        RCLCPP_INFO_ONCE(this->get_logger(), "开始填补Octomap空缺，半径: %d", radius);
+
+        std::vector<octomap::point3d> points_to_add;
+
+        // 获取所有已占用的节点
+        octomap::KeySet occupied_keys;
+        for (octomap::OcTree::leaf_iterator it = tree.begin_leafs(), end = tree.end_leafs(); it != end; ++it) {
+            if (tree.isNodeOccupied(*it)) {
+                occupied_keys.insert(it.getKey());
+            }
+        }
+
+        // 寻找候选空节点（与占用节点相邻的节点）
+        octomap::KeySet empty_candidates;
+        for (const auto& key : occupied_keys) {
+            for (int dx = -radius; dx <= radius; ++dx) {
+                for (int dy = -radius; dy <= radius; ++dy) {
+                    for (int dz = -radius; dz <= radius; ++dz) {
+                        if (dx == 0 && dy == 0 && dz == 0) continue;
+                        octomap::OcTreeKey n_key = key;
+                        n_key[0] += dx;
+                        n_key[1] += dy;
+                        n_key[2] += dz;
+                        if (occupied_keys.find(n_key) == occupied_keys.end()) {
+                            empty_candidates.insert(n_key);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 判断候选节点周围的占用节点数量
+        // 计算阈值：假设是一个平面，半径内的平面节点数约为 (2r+1)^2 - 1
+        // 我们取其 40% 作为阈值，这样既能补齐孔洞，又不会过度膨胀
+        int threshold = std::max(4, static_cast<int>(std::pow(2 * radius + 1, 2) * 0.4));
+
+        for (const auto& key : empty_candidates) {
+            int occupied_count = 0;
+            for (int dx = -radius; dx <= radius; ++dx) {
+                for (int dy = -radius; dy <= radius; ++dy) {
+                    for (int dz = -radius; dz <= radius; ++dz) {
+                        if (dx == 0 && dy == 0 && dz == 0) continue;
+                        octomap::OcTreeKey n_key = key;
+                        n_key[0] += dx;
+                        n_key[1] += dy;
+                        n_key[2] += dz;
+                        if (occupied_keys.find(n_key) != occupied_keys.end()) {
+                            occupied_count++;
+                        }
+                    }
+                }
+            }
+            
+            if (occupied_count >= threshold) {
+                points_to_add.push_back(tree.keyToCoord(key));
+            }
+        }
+
+        // 将补齐的节点加入到 Octomap 中
+        for (const auto& pt : points_to_add) {
+            tree.updateNode(pt, true);
+        }
+
+        RCLCPP_INFO_ONCE(this->get_logger(), "填补完成，共补齐了 %zu 个节点", points_to_add.size());
     }
 
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_;

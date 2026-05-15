@@ -40,11 +40,12 @@ def generate_launch_description():
         output='screen',
         parameters=[
             {"use_sim_time": False},
-            {"resolution": 0.1},
+            {"resolution": 0.15},
             {"prob_hit": 0.7},
             {"prob_miss": 0.4},
             {"thres_min": 0.12},
             {"thres_max": 0.97},
+            {"hole_filling_radius": 2},
         ],
     )
 

@@ -76,6 +76,7 @@ private:
         map.setFrameId(msg->header.frame_id);
         map.setTimestamp(rclcpp::Time(msg->header.stamp).nanoseconds());
         map.setGeometry(grid_map::Length(length_x, length_y), resolution, grid_map::Position(center_x, center_y));
+        map.setBasicLayers({layer_name});
 
         // Iterate through point cloud and update the GridMap layer
         for (const auto& point : cloud->points) {
