@@ -27,6 +27,7 @@ setup(
     entry_points={
         'console_scripts': [
             'local_planner_node = local_path_planner.local_planner_node:main',
+            'fake_lidar_points_pub = local_path_planner.fake_lidar_points_pub:main',
         ],
     },
 )

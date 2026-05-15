@@ -28,6 +28,7 @@ class LocalPlannerNode(Node):
         self.declare_parameter("max_angular_speed", 1.0)
         self.declare_parameter("goal_tolerance", 0.15)
         self.declare_parameter("control_rate", 20.0)
+        self.declare_parameter("local_path_lookahead", 5.0)
 
         self.layer_name = self.get_parameter("layer_name").value
         self.max_slope_angle = self.get_parameter("max_slope_angle").value
@@ -43,6 +44,7 @@ class LocalPlannerNode(Node):
         self.max_angular_speed = self.get_parameter("max_angular_speed").value
         self.goal_tolerance = self.get_parameter("goal_tolerance").value
         self.control_rate = self.get_parameter("control_rate").value
+        self.local_path_lookahead = self.get_parameter("local_path_lookahead").value
 
         # State
         self.global_path = None
@@ -67,11 +69,16 @@ class LocalPlannerNode(Node):
         # Publisher: velocity commands (stamped with timestamp)
         self.pub_cmd_vel = self.create_publisher(TwistStamped, "/cmd_vel", 10)
 
-        # 局部路径发布者
+        # 局部路径发布
         self.local_path_pub = self.create_publisher(
             Path,
-            "local_path",
+            "/local_path",
             10,
+        )
+        # 创建定时器，循环发布局部路径
+        self.pub_local_path_timer = self.create_timer(
+            0.5,
+            self.publish_local_path_callback
         )
 
         # Control loop timer
@@ -80,7 +87,56 @@ class LocalPlannerNode(Node):
 
         self.get_logger().info("局部路径规划器初始化完成 (Pure Pursuit + 动态避障)")
 
+        
+
     # ---------- Callbacks ----------
+    def publish_local_path_callback(self):
+        if self.global_path is None or len(self.global_path.poses) == 0:
+            return
+        if self.current_pose is None:
+            return
+
+        cx, cy, _ = self.current_pose
+
+        closest_idx = 0
+        closest_dist = float("inf")
+        for i, pose_stamped in enumerate(self.global_path.poses):
+            px = pose_stamped.pose.position.x
+            py = pose_stamped.pose.position.y
+            d = math.hypot(cx - px, cy - py)
+            if d < closest_dist:
+                closest_dist = d
+                closest_idx = i
+
+        local_poses = []
+        accumulated_dist = 0.0
+        prev_pt = (cx, cy)
+
+        for i in range(closest_idx, len(self.global_path.poses)):
+            pt = self.global_path.poses[i].pose.position
+            accumulated_dist += math.hypot(pt.x - prev_pt[0], pt.y - prev_pt[1])
+            if i > closest_idx and accumulated_dist > self.local_path_lookahead:
+                break
+
+            pose = PoseStamped()
+            pose.header.stamp = self.get_clock().now().to_msg()
+            pose.header.frame_id = self.map_frame
+            pose.pose.position.x = pt.x
+            pose.pose.position.y = pt.y
+            z = self.get_path_point_z(pt.x, pt.y)
+            pose.pose.position.z = z
+            local_poses.append(pose)
+            prev_pt = (pt.x, pt.y)
+
+        if len(local_poses) < 2:
+            return
+
+        local_path_msg = Path()
+        local_path_msg.header.stamp = self.get_clock().now().to_msg()
+        local_path_msg.header.frame_id = self.map_frame
+        local_path_msg.poses = local_poses
+
+        self.local_path_pub.publish(local_path_msg)
 
     def global_path_callback(self, msg):
         # 判断是否为新的目标点，只有目标点发生明显变化时才重置 goal_reached 状态

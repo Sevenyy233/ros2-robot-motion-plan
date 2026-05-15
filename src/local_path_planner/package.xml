@@ -9,6 +9,8 @@
 
   <depend>rclpy</depend>
   <depend>grid_map_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>sensor_msgs_py</depend>
   <depend>nav_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>trajectory_msgs</depend>
