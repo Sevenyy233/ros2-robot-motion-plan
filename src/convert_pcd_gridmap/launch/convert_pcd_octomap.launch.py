@@ -4,7 +4,7 @@ from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
-# 转换pcd文件为gridmap
+# 转换pcd文件为octomap
 def generate_launch_description():
     pcd_launch_arg = DeclareLaunchArgument(
         'pcd',
@@ -34,19 +34,22 @@ def generate_launch_description():
         ]
     )
 
-    PointCloud_to_GridMap_node = Node(
+    PointCloud_to_Octomap_node = Node(
         package="convert_pcd_gridmap",
-        executable='pointcloud_to_gridmap',
+        executable='pointcloud_to_octomap',
         output='screen',
         parameters=[
             {"use_sim_time": False},
             {"resolution": 0.1},
-            {"hole_filling_radius": 2},
+            {"prob_hit": 0.7},
+            {"prob_miss": 0.4},
+            {"thres_min": 0.12},
+            {"thres_max": 0.97},
         ],
     )
 
     return LaunchDescription([
         pcd_launch_arg,
         pcd_to_PointCloud_node,
-        PointCloud_to_GridMap_node,
+        PointCloud_to_Octomap_node,
     ])

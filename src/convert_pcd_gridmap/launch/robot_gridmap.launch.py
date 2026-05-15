@@ -18,8 +18,11 @@ def generate_launch_description():
 
     # 1、启动PCD转GridMap
     convert_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(os.path.join(convert_pcd_gridmap_pkg, 
-            "launch", "convert_pcd_gridmap.launch.py"))
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                convert_pcd_gridmap_pkg, 
+                "launch", 
+                "convert_pcd_gridmap.launch.py"))
     )
 
     # 2、启动机器人模型加载
@@ -43,12 +46,6 @@ def generate_launch_description():
         arguments=['0', '0', '0', '0', '0', '0', 'map', 'odom']
     )
 
-    static_odom_to_base = Node(
-        package="tf2_ros",
-        executable="static_transform_publisher",
-        name="odom_to_base_link",
-        arguments=['0', '0', '0', '0', '0', '0', 'odom', 'base_footprint']
-    )
     dummy_robot_node = Node(
         package="convert_pcd_gridmap",
         executable="dummy_robot",

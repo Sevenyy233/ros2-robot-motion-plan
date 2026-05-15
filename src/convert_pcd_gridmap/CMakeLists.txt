@@ -19,6 +19,8 @@ find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(octomap REQUIRED)
+find_package(octomap_msgs REQUIRED)
 
 add_executable(pointcloud_to_gridmap src/pointcloud_to_gridmap.cpp)
 ament_target_dependencies(pointcloud_to_gridmap
@@ -43,9 +45,20 @@ ament_target_dependencies(dummy_robot
   grid_map_core
 )
 
+add_executable(pointcloud_to_octomap src/pointcloud_to_octomap.cpp)
+ament_target_dependencies(pointcloud_to_octomap
+  rclcpp
+  sensor_msgs
+  octomap
+  octomap_msgs
+  pcl_conversions
+  grid_map_core
+)
+
 install(TARGETS
   pointcloud_to_gridmap
   dummy_robot
+  pointcloud_to_octomap
   DESTINATION lib/${PROJECT_NAME}
 )
 
