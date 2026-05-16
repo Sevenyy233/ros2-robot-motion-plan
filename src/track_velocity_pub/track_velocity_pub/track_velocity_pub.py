@@ -51,7 +51,9 @@ class TrackVelocityPublisher(Node):
 def main():
     rclpy.init()
     node = TrackVelocityPublisher()
-    
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
 
         
         

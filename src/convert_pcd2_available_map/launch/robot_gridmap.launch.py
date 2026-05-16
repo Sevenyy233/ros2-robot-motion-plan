@@ -7,11 +7,11 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 
 def generate_launch_description():
-    convert_pcd_gridmap_pkg = get_package_share_directory("convert_pcd_gridmap")
+    convert_pcd2_available_map_pkg = get_package_share_directory("convert_pcd2_available_map")
 
     # rviz配置
     rviz_config_path = PathJoinSubstitution([
-        convert_pcd_gridmap_pkg,
+        convert_pcd2_available_map_pkg,
         "rviz",
         "show.rviz"
     ])
@@ -20,16 +20,16 @@ def generate_launch_description():
     convert_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
-                convert_pcd_gridmap_pkg, 
+                convert_pcd2_available_map_pkg, 
                 "launch", 
-                "convert_pcd_gridmap.launch.py"))
+                "convert_pcd2_available_map.launch.py"))
     )
 
     # 2、启动机器人模型加载
     display_robot_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
-                convert_pcd_gridmap_pkg,
+                convert_pcd2_available_map_pkg,
                 "launch",
                 "display_urdf.launch.py"
             )
@@ -47,7 +47,7 @@ def generate_launch_description():
     )
 
     dummy_robot_node = Node(
-        package="convert_pcd_gridmap",
+        package="convert_pcd2_available_map",
         executable="dummy_robot",
         name="dummy_robot",
         output="screen",
