@@ -22,7 +22,7 @@ def generate_launch_description():
             os.path.join(
                 convert_pcd2_available_map_pkg, 
                 "launch", 
-                "convert_pcd2_available_map.launch.py"))
+                "convert_pcd2_gridmap.launch.py"))
     )
 
     # 2、启动机器人模型加载

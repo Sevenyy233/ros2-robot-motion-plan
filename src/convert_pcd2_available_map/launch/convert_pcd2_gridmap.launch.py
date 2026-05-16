@@ -20,6 +20,7 @@ def generate_launch_description():
         [pcd_file_name, '.pcd'],
     ])
 
+    # .pcd文件 -> PointCloud2消息
     pcd_to_PointCloud_node = Node(
         package="pcl_ros",
         executable='pcd_to_pointcloud',
@@ -34,6 +35,7 @@ def generate_launch_description():
         ]
     )
 
+    # PointCloud2消息 -> GridMap消息
     PointCloud_to_GridMap_node = Node(
         package="convert_pcd2_available_map",
         executable='pointcloud_to_gridmap',

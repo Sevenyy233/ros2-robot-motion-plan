@@ -14,7 +14,10 @@ public:
         // Declare parameters
         this->declare_parameter<double>("resolution", 0.1);
         this->declare_parameter<std::string>("layer_name", "elevation");
+        this->declare_parameter<std::string>("slope_layer_name", "slope");
+        this->declare_parameter<std::string>("traversability_layer_name", "traversability");
         this->declare_parameter<int>("hole_filling_radius", 2); // Radius for filling holes in grid (0 to disable)
+        this->declare_parameter<double>("max_slope_angle", 45.0); // 最大允许坡度(度)
 
         // Subscribers and Publishers
         sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -34,6 +37,8 @@ private:
     void pointCloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
         double resolution = this->get_parameter("resolution").as_double();
         std::string layer_name = this->get_parameter("layer_name").as_string();
+        std::string slope_layer_name = this->get_parameter("slope_layer_name").as_string();
+        std::string trav_layer_name = this->get_parameter("traversability_layer_name").as_string();
 
         // Convert PointCloud2 to PCL PointCloud
         pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>());
@@ -72,11 +77,12 @@ private:
         double center_y = (max_y + min_y) / 2.0;
 
         // Initialize GridMap
-        grid_map::GridMap map({layer_name});
+        // 初始化 GridMap 并添加 elevation, slope, traversability 三个层
+        grid_map::GridMap map({layer_name, slope_layer_name, trav_layer_name});
         map.setFrameId(msg->header.frame_id);
         map.setTimestamp(rclcpp::Time(msg->header.stamp).nanoseconds());
         map.setGeometry(grid_map::Length(length_x, length_y), resolution, grid_map::Position(center_x, center_y));
-        map.setBasicLayers({layer_name});
+        map.setBasicLayers({layer_name, slope_layer_name, trav_layer_name});
 
         // Iterate through point cloud and update the GridMap layer
         for (const auto& point : cloud->points) {
@@ -126,6 +132,52 @@ private:
             }
             map = map_filled;
         }
+
+        // ================= 添加坡度层 (Slope) 和 通行度层 (Traversability) =================
+        double max_slope_angle_deg = this->get_parameter("max_slope_angle").as_double();
+        double max_slope_rad = max_slope_angle_deg * M_PI / 180.0;
+
+        for (grid_map::GridMapIterator iterator(map); !iterator.isPastEnd(); ++iterator) {
+            grid_map::Index index = *iterator;
+            if (!map.isValid(index, layer_name)) {
+                continue;
+            }
+
+            // 使用中心差分法计算X和Y方向的高程梯度
+            double dz_dx = 0.0;
+            double dz_dy = 0.0;
+            bool has_grad = false;
+
+            grid_map::Index idx_x_prev(index(0) - 1, index(1));
+            grid_map::Index idx_x_next(index(0) + 1, index(1));
+            if (map.isValid(idx_x_prev, layer_name) && map.isValid(idx_x_next, layer_name)) {
+                dz_dx = (map.at(layer_name, idx_x_next) - map.at(layer_name, idx_x_prev)) / (2.0 * resolution);
+                has_grad = true;
+            }
+
+            grid_map::Index idx_y_prev(index(0), index(1) - 1);
+            grid_map::Index idx_y_next(index(0), index(1) + 1);
+            if (map.isValid(idx_y_prev, layer_name) && map.isValid(idx_y_next, layer_name)) {
+                dz_dy = (map.at(layer_name, idx_y_next) - map.at(layer_name, idx_y_prev)) / (2.0 * resolution);
+                has_grad = true;
+            }
+
+            if (has_grad) {
+                // 计算合成坡度（弧度）
+                double slope = std::atan(std::sqrt(dz_dx * dz_dx + dz_dy * dz_dy));
+                map.at(slope_layer_name, index) = slope;
+
+                // 计算通行度 Traversability (0.0: 不可通行, 1.0: 完全可通行)
+                double traversability = 1.0 - (slope / max_slope_rad);
+                if (traversability < 0.0) traversability = 0.0; // 超过最大坡度，不可通行
+                map.at(trav_layer_name, index) = traversability;
+            } else {
+                // 边界情况，假设平坦
+                map.at(slope_layer_name, index) = 0.0;
+                map.at(trav_layer_name, index) = 1.0;
+            }
+        }
+        // =================================================================================
 
         // Convert GridMap to ROS message and publish
         std::unique_ptr<grid_map_msgs::msg::GridMap> message;

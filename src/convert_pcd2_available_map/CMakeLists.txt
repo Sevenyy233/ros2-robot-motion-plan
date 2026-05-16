@@ -56,7 +56,7 @@ ament_target_dependencies(pointcloud_to_octomap
 )
 
 install(TARGETS
-  pointcloud_to_map
+  pointcloud_to_gridmap
   dummy_robot
   pointcloud_to_octomap
   DESTINATION lib/${PROJECT_NAME}
