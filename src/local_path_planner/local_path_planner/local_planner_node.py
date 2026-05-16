@@ -2,8 +2,8 @@ import rclpy
 from rclpy.node import Node
 from grid_map_msgs.msg import GridMap
 from nav_msgs.msg import Path
+from sensor_msgs.msg import PointCloud2
 from geometry_msgs.msg import PoseStamped, TwistStamped
-from custom_motion_plan_msgs.msg import RobotTrajectory
 import tf2_ros
 import math
 import numpy as np
@@ -30,6 +30,14 @@ class LocalPlannerNode(Node):
         self.declare_parameter("control_rate", 20.0)
         self.declare_parameter("local_path_lookahead", 3.0)
 
+        self.declare_parameter("lidar_topics", ["/lidar3_points"])
+        self.declare_parameter("obstacle_safety_distance", 0.3)
+        self.declare_parameter("obstacle_check_ahead", 3.0)
+        self.declare_parameter("local_grid_resolution", 0.1)
+        self.declare_parameter("local_grid_size", 40)
+        self.declare_parameter("max_lateral_offset", 1.5)
+        self.declare_parameter("avoidance_sample_step", 0.1)
+
         self.layer_name = self.get_parameter("layer_name").value
         self.max_slope_angle = self.get_parameter("max_slope_angle").value
         self.base_frame = self.get_parameter("base_frame").value
@@ -46,6 +54,14 @@ class LocalPlannerNode(Node):
         self.control_rate = self.get_parameter("control_rate").value
         self.local_path_lookahead = self.get_parameter("local_path_lookahead").value
 
+        self.lidar_topics = self.get_parameter("lidar_topics").value
+        self.obstacle_safety_distance = self.get_parameter("obstacle_safety_distance").value
+        self.obstacle_check_ahead = self.get_parameter("obstacle_check_ahead").value
+        self.local_grid_resolution = self.get_parameter("local_grid_resolution").value
+        self.local_grid_size = self.get_parameter("local_grid_size").value
+        self.max_lateral_offset = self.get_parameter("max_lateral_offset").value
+        self.avoidance_sample_step = self.get_parameter("avoidance_sample_step").value
+
         # State
         self.global_path = None
         self.map_data = None
@@ -53,6 +69,9 @@ class LocalPlannerNode(Node):
         self.current_pose = None
         self.current_yaw = 0.0
         self.goal_reached = False
+        self.avoidance_path = None
+        self.latest_cloud_msg = None
+        self.lidar_timestamp = None
 
         # TF
         self.tf_buffer = tf2_ros.Buffer()
@@ -64,6 +83,9 @@ class LocalPlannerNode(Node):
         )
         self.sub_grid_map = self.create_subscription(
             GridMap, "/grid_map", self.grid_map_callback, 1
+        )
+        self.sub_lidar_points = self.create_subscription(
+            PointCloud2, "/lidar3_points", self.lidar_points_callback, 10
         )
 
         # Publisher: velocity commands (stamped with timestamp)
@@ -98,11 +120,19 @@ class LocalPlannerNode(Node):
 
         cx, cy, _ = self.current_pose
 
+        if self.avoidance_path is not None:
+            source_poses = self.avoidance_path
+        else:
+            source_poses = self.global_path.poses
+
         closest_idx = 0
         closest_dist = float("inf")
-        for i, pose_stamped in enumerate(self.global_path.poses):
-            px = pose_stamped.pose.position.x
-            py = pose_stamped.pose.position.y
+        for i, ps in enumerate(source_poses):
+            if isinstance(ps, PoseStamped):
+                px = ps.pose.position.x
+                py = ps.pose.position.y
+            else:
+                px, py, _ = ps
             d = math.hypot(cx - px, cy - py)
             if d < closest_dist:
                 closest_dist = d
@@ -112,21 +142,26 @@ class LocalPlannerNode(Node):
         accumulated_dist = 0.0
         prev_pt = (cx, cy)
 
-        for i in range(closest_idx, len(self.global_path.poses)):
-            pt = self.global_path.poses[i].pose.position
-            accumulated_dist += math.hypot(pt.x - prev_pt[0], pt.y - prev_pt[1])
+        for i in range(closest_idx, len(source_poses)):
+            if isinstance(source_poses[i], PoseStamped):
+                ppo = source_poses[i].pose.position
+                pt = (ppo.x, ppo.y)
+            else:
+                pt = (source_poses[i][0], source_poses[i][1])
+
+            accumulated_dist += math.hypot(pt[0] - prev_pt[0], pt[1] - prev_pt[1])
             if i > closest_idx and accumulated_dist > self.local_path_lookahead:
                 break
 
             pose = PoseStamped()
             pose.header.stamp = self.get_clock().now().to_msg()
             pose.header.frame_id = self.map_frame
-            pose.pose.position.x = pt.x
-            pose.pose.position.y = pt.y
-            z = self.get_path_point_z(pt.x, pt.y)
+            pose.pose.position.x = pt[0]
+            pose.pose.position.y = pt[1]
+            z = self.get_path_point_z(pt[0], pt[1])
             pose.pose.position.z = z
             local_poses.append(pose)
-            prev_pt = (pt.x, pt.y)
+            prev_pt = pt
 
         if len(local_poses) < 2:
             return
@@ -137,6 +172,218 @@ class LocalPlannerNode(Node):
         local_path_msg.poses = local_poses
 
         self.local_path_pub.publish(local_path_msg)
+
+    def lidar_points_callback(self, msg):
+        self.latest_cloud_msg = msg
+        self.lidar_timestamp = self.get_clock().now()
+
+    def cloud_to_obstacle_grid(self):
+        if self.latest_cloud_msg is None or self.lidar_timestamp is None:
+            return None
+        if self.current_pose is None:
+            return None
+
+        age = (self.get_clock().now() - self.lidar_timestamp).nanoseconds / 1e9
+        if age > 0.5:
+            return None
+
+        try:
+            t_base_map = self.tf_buffer.lookup_transform(
+                self.base_frame, self.latest_cloud_msg.header.frame_id, rclpy.time.Time()
+            )
+        except Exception:
+            return None
+
+        pts = []
+        offset_to_first = 0
+        x_idx = y_idx = z_idx = -1
+        for field in self.latest_cloud_msg.fields:
+            if field.name == "x":
+                x_idx = offset_to_first
+            elif field.name == "y":
+                y_idx = offset_to_first
+            elif field.name == "z":
+                z_idx = offset_to_first
+            offset_to_first += 1
+
+        if x_idx < 0 or y_idx < 0 or z_idx < 0:
+            return None
+
+        data = np.frombuffer(self.latest_cloud_msg.data, dtype=np.float32)
+        point_step_floats = self.latest_cloud_msg.point_step // 4
+        num_points = self.latest_cloud_msg.width * self.latest_cloud_msg.height
+        if len(data) < num_points * point_step_floats:
+            return None
+
+        pc = data.reshape((num_points, point_step_floats))
+        x_arr = pc[:, x_idx]
+        y_arr = pc[:, y_idx]
+        z_arr = pc[:, z_idx]
+        valid = np.isfinite(x_arr) & np.isfinite(y_arr) & np.isfinite(z_arr)
+        x_arr = x_arr[valid]
+        y_arr = y_arr[valid]
+        z_arr = z_arr[valid]
+
+        tx = t_base_map.transform.translation.x
+        ty = t_base_map.transform.translation.y
+        tz = t_base_map.transform.translation.z
+        q = t_base_map.transform.rotation
+
+        qx, qy, qz, qw = q.x, q.y, q.z, q.w
+        R = np.array([
+            [1 - 2*qy*qy - 2*qz*qz, 2*qx*qy - 2*qz*qw, 2*qx*qz + 2*qy*qw],
+            [2*qx*qy + 2*qz*qw, 1 - 2*qx*qx - 2*qz*qz, 2*qy*qz - 2*qx*qw],
+            [2*qx*qz - 2*qy*qw, 2*qy*qz + 2*qx*qw, 1 - 2*qx*qx - 2*qy*qy]
+        ])
+        pts_lidar = np.column_stack((x_arr, y_arr, z_arr))
+        pts_base = (R @ pts_lidar.T).T + np.array([tx, ty, tz])
+
+        half_size = (self.local_grid_size * self.local_grid_resolution) / 2.0
+        mask_x = np.abs(pts_base[:, 0]) <= half_size
+        mask_y = np.abs(pts_base[:, 1]) <= half_size
+        mask = mask_x & mask_y
+
+        height_thresh = self.obstacle_safety_distance * 0.3
+        mask_z = np.abs(pts_base[:, 2]) <= height_thresh
+        mask = mask & mask_z
+
+        pts_base = pts_base[mask]
+        if len(pts_base) == 0:
+            return np.zeros((self.local_grid_size, self.local_grid_size), dtype=np.uint8)
+
+        grid = np.zeros((self.local_grid_size, self.local_grid_size), dtype=np.uint8)
+        ix = np.floor((pts_base[:, 0] + half_size) / self.local_grid_resolution).astype(int)
+        iy = np.floor((pts_base[:, 1] + half_size) / self.local_grid_resolution).astype(int)
+        valid = (ix >= 0) & (ix < self.local_grid_size) & (iy >= 0) & (iy < self.local_grid_size)
+        grid[ix[valid], iy[valid]] = 1
+
+        safety_cells = int(np.ceil(self.obstacle_safety_distance / self.local_grid_resolution))
+        if safety_cells > 0:
+            dilated = np.copy(grid)
+            for dx in range(-safety_cells, safety_cells + 1):
+                for dy in range(-safety_cells, safety_cells + 1):
+                    if dx == 0 and dy == 0:
+                        continue
+                    shifted = np.roll(grid, (dx, dy), axis=(0, 1))
+                    if dx > 0:
+                        shifted[:dx, :] = 0
+                    elif dx < 0:
+                        shifted[dx:, :] = 0
+                    if dy > 0:
+                        shifted[:, :dy] = 0
+                    elif dy < 0:
+                        shifted[:, dy:] = 0
+                    dilated |= shifted
+            grid = dilated
+
+        return grid
+
+    def check_line_collision(self, x1, y1, x2, y2, grid):
+        half = (self.local_grid_size * self.local_grid_resolution) / 2.0
+        steps = max(1, int(math.hypot(x2 - x1, y2 - y1) / (self.local_grid_resolution * 0.5)))
+        for s in range(steps + 1):
+            t = s / max(steps, 1)
+            x = x1 + (x2 - x1) * t
+            y = y1 + (y2 - y1) * t
+            ix = int(np.floor((x + half) / self.local_grid_resolution))
+            iy = int(np.floor((y + half) / self.local_grid_resolution))
+            if 0 <= ix < self.local_grid_size and 0 <= iy < self.local_grid_size:
+                if grid[ix, iy]:
+                    return False
+        return True
+
+    def find_avoidance_lookahead(self, orig_lookahead):
+        grid = self.cloud_to_obstacle_grid()
+        if grid is None:
+            self.avoidance_path = None
+            return orig_lookahead
+
+        cx, cy, cz = self.current_pose
+        lx, ly, lz = orig_lookahead
+        dx = lx - cx
+        dy = ly - cy
+        ld = math.hypot(dx, dy)
+        if ld < 1e-6:
+            return orig_lookahead
+
+        fwd_x = dx / ld
+        fwd_y = dy / ld
+        perp_x = -fwd_y
+        perp_y = fwd_x
+
+        if self.check_line_collision(0.0, 0.0, ld, 0.0, grid):
+            self.avoidance_path = None
+            return orig_lookahead
+
+        half = (self.local_grid_size * self.local_grid_resolution) / 2.0
+        best = None
+        best_score = float("inf")
+        check_dist = min(ld, self.obstacle_check_ahead)
+
+        for sign in (-1.0, 1.0):
+            offset = sign * self.avoidance_sample_step
+            while abs(offset) <= self.max_lateral_offset:
+                ax = fwd_x * check_dist + perp_x * offset
+                ay = fwd_y * check_dist + perp_y * offset
+
+                if not (-half < ax < half and -half < ay < half):
+                    offset += sign * self.avoidance_sample_step
+                    continue
+
+                if self.check_line_collision(0.0, 0.0, ax, ay, grid):
+                    score = abs(offset) + math.hypot(ax - check_dist, ay)
+                    if score < best_score:
+                        best_score = score
+                        best = (cx + ax, cy + ay, cz)
+                    break
+                offset += sign * self.avoidance_sample_step
+
+        if best is None:
+            self.get_logger().warn("避障采样未找到可行路径，减速并尝试小步避障", throttle_duration_sec=1.0)
+
+            for sign in (-1.0, 1.0):
+                offset = sign * self.avoidance_sample_step
+                while abs(offset) <= self.max_lateral_offset * 0.5:
+                    ax = fwd_x * self.lookahead_min + perp_x * offset
+                    ay = fwd_y * self.lookahead_min + perp_y * offset
+                    if self.check_line_collision(0.0, 0.0, ax, ay, grid):
+                        best = (cx + ax, cy + ay, cz)
+                        break
+                    offset += sign * self.avoidance_sample_step
+                if best is not None:
+                    break
+
+        if best is not None:
+            waypoint1 = (cx + perp_x * (best[0] - cx) * 0.5, cy + perp_y * (best[1] - cy) * 0.5, cz)
+            waypoint2 = best
+            reconnect_pt = self.reconnect_to_global(best, fwd_x, fwd_y)
+            if reconnect_pt is not None:
+                self.avoidance_path = [waypoint1, waypoint2, reconnect_pt]
+            else:
+                self.avoidance_path = [waypoint1, waypoint2]
+            return waypoint2
+
+        self.avoidance_path = None
+        return orig_lookahead
+
+    def reconnect_to_global(self, avoidance_pt, fwd_x, fwd_y):
+        if self.global_path is None or len(self.global_path.poses) < 2:
+            return None
+        ax, ay, _ = avoidance_pt
+
+        best_pt = None
+        best_dist = float("inf")
+        for pose_stamped in self.global_path.poses:
+            px = pose_stamped.pose.position.x
+            py = pose_stamped.pose.position.y
+            proj = (px - ax) * fwd_x + (py - ay) * fwd_y
+            if proj > 0:
+                d = math.hypot(px - ax, py - ay)
+                if d < best_dist and d > self.lookahead_min:
+                    best_dist = d
+                    best_pt = (px, py, pose_stamped.pose.position.z)
+
+        return best_pt
 
     def global_path_callback(self, msg):
         # 判断是否为新的目标点，只有目标点发生明显变化时才重置 goal_reached 状态
@@ -283,7 +530,9 @@ class LocalPlannerNode(Node):
             return 0.0, 0.0
 
         cx, cy, cz = self.current_pose
-        lx, ly, lz = lookahead_pt
+
+        avoided_pt = self.find_avoidance_lookahead(lookahead_pt)
+        lx, ly, lz = avoided_pt
 
         dx = lx - cx
         dy = ly - cy
