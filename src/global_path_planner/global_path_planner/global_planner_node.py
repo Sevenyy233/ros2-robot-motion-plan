@@ -8,6 +8,7 @@ import numpy as np
 import heapq
 import math
 import tf2_ros
+import asyncio
 from custom_motion_plan_msgs.action import SendGoal
 
 class AStarPlanner(Node):
@@ -16,6 +17,8 @@ class AStarPlanner(Node):
         
         # Parameters
         self.declare_parameter('layer_name', 'elevation')
+        self.declare_parameter('slope_layer_name', 'slope')
+        self.declare_parameter('traversability_layer_name', 'traversability')
         self.declare_parameter('max_elevation', 1.0)  # Max absolute height threshold
         self.declare_parameter('max_slope_angle', 45.0)  # Max slope angle in degrees
         self.declare_parameter('treat_nan_as_obstacle', True)
@@ -23,8 +26,12 @@ class AStarPlanner(Node):
         self.declare_parameter('base_frame', 'base_link')
         self.declare_parameter('map_frame', 'map')
         self.declare_parameter('path_z_offset', 0.05)  # Slight offset to prevent Z-fighting in RViz
+        self.declare_parameter('replan_period', 2.0)   # 全局重规划周期(秒)
+        self.declare_parameter('goal_tolerance', 0.5)  # 目标点到达容差(米)
         
         self.layer_name = self.get_parameter('layer_name').value
+        self.slope_layer_name = self.get_parameter('slope_layer_name').value
+        self.trav_layer_name = self.get_parameter('traversability_layer_name').value
         self.max_elevation = self.get_parameter('max_elevation').value
         self.max_slope_angle = self.get_parameter('max_slope_angle').value
         self.treat_nan_as_obstacle = self.get_parameter('treat_nan_as_obstacle').value
@@ -32,13 +39,18 @@ class AStarPlanner(Node):
         self.base_frame = self.get_parameter('base_frame').value
         self.map_frame = self.get_parameter('map_frame').value
         self.path_z_offset = self.get_parameter('path_z_offset').value
+        self.replan_period = self.get_parameter('replan_period').value
+        self.goal_tolerance = self.get_parameter('goal_tolerance').value
         
         # State
         self.grid_map = None
-        self.map_data = None
+        self.map_data = None # elevation
+        self.slope_data = None # slope
+        self.trav_data = None # traversability
         self.map_info = None
         self.start_pose = None
         self.goal_pose = None
+        self.is_navigating = False # 是否处于导航/重规划状态
         
         # 初始位置获取方式，从TF或/initialpose话题获取
         if self.use_tf_for_start:
@@ -78,7 +90,26 @@ class AStarPlanner(Node):
             self.send_goal_callback
         )
 
-        self.get_logger().info("3D A* 全局路径规划器初始化完成")
+        # 周期性重规划定时器
+        self.replan_timer = self.create_timer(self.replan_period, self.replan_timer_callback)
+
+        self.get_logger().info("3D A* 全局路径规划器初始化完成 (支持动态重规划)")
+
+    def replan_timer_callback(self):
+        if not self.is_navigating or self.goal_pose is None or self.start_pose is None:
+            return
+            
+        # 检查是否到达目标点
+        dx = self.start_pose.pose.position.x - self.goal_pose.pose.position.x
+        dy = self.start_pose.pose.position.y - self.goal_pose.pose.position.y
+        if math.hypot(dx, dy) < self.goal_tolerance:
+            self.get_logger().info("全局规划器：已到达目标点附近，停止重规划。")
+            self.is_navigating = False
+            self.current_path_msg = None
+            return
+            
+        self.get_logger().info("全局规划器：周期性重规划中...")
+        self.plan_path()
 
     def path_pub_timer_callback(self):
         if self.current_path_msg is not None:
@@ -113,55 +144,83 @@ class AStarPlanner(Node):
 
     def goal_callback(self, msg):
         self.goal_pose = msg
+        self.is_navigating = True
         self.get_logger().info(f"已接收目标位姿: x={msg.pose.position.x:.2f}, y={msg.pose.position.y:.2f}")
         self.plan_path()
 
-    def send_goal_callback(self, goal_handle):
+    async def send_goal_callback(self, goal_handle):
         self.get_logger().info("接收到新的全局路径规划请求(Action)...")
         
         request = goal_handle.request
         self.goal_pose = request.goal_pose
+        self.is_navigating = True
         self.get_logger().info(f"Action已接收目标位姿: x={self.goal_pose.pose.position.x:.2f}, y={self.goal_pose.pose.position.y:.2f}")
         
-        # 发布开始规划时的反馈
-        feedback_msg = SendGoal.Feedback()
-        feedback_msg.current_stage = 1  # STAGE_GLOBAL_PLANNING
-        feedback_msg.current_time = self.get_clock().now().to_msg()
-        feedback_msg.completion_ratio = 0.0
-        feedback_msg.distance_remaining = 0.0
-        goal_handle.publish_feedback(feedback_msg)
-        
+        # 立刻进行一次初始规划
         success, error_code, message = self.plan_path()
-        
-        # 规划完成，再次发布反馈更新状态
-        feedback_msg.current_time = self.get_clock().now().to_msg()
-        feedback_msg.completion_ratio = 1.0 if success else 0.0
-        goal_handle.publish_feedback(feedback_msg)
-        
-        result = SendGoal.Result()
-        result.success = success
-        result.error_code = error_code
-        result.message = message
-        result.finish_time = self.get_clock().now().to_msg()
-        
-        if success:
-            goal_handle.succeed()
-        else:
+        if not success:
+            self.is_navigating = False
             goal_handle.abort()
+            result = SendGoal.Result()
+            result.success = False
+            result.error_code = error_code
+            result.message = message
+            return result
             
+        # 循环等待直到到达目标点或被取消
+        while rclpy.ok() and self.is_navigating:
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+                self.is_navigating = False
+                self.current_path_msg = None
+                self.get_logger().info('全局规划 Action 被取消')
+                result = SendGoal.Result()
+                result.success = False
+                result.message = "被取消"
+                return result
+                
+            # 发送反馈
+            feedback_msg = SendGoal.Feedback()
+            feedback_msg.current_stage = 1  # STAGE_GLOBAL_PLANNING
+            feedback_msg.current_time = self.get_clock().now().to_msg()
+            
+            if self.start_pose:
+                dx = self.start_pose.pose.position.x - self.goal_pose.pose.position.x
+                dy = self.start_pose.pose.position.y - self.goal_pose.pose.position.y
+                dist = math.hypot(dx, dy)
+                feedback_msg.distance_remaining = float(dist)
+            else:
+                feedback_msg.distance_remaining = 0.0
+                
+            goal_handle.publish_feedback(feedback_msg)
+            
+            # Action 本身不需要频繁循环，重规划由 replan_timer_callback 在后台定时执行
+            await asyncio.sleep(0.5)
+            
+        # 到达目标点，退出循环
+        goal_handle.succeed()
+        result = SendGoal.Result()
+        result.success = True
+        result.error_code = 0
+        result.message = "成功到达目标点"
+        result.finish_time = self.get_clock().now().to_msg()
         return result
 
     def grid_map_callback(self, msg):
         try:
             layer_idx = msg.layers.index(self.layer_name)
+            slope_idx = msg.layers.index(self.slope_layer_name)
+            trav_idx = msg.layers.index(self.trav_layer_name)
         except ValueError:
-            self.get_logger().warn(f"在 GridMap 中未找到层 '{self.layer_name}'", throttle_duration_sec=5.0)
+            self.get_logger().warn(f"在 GridMap 中未找到所需层 ({self.layer_name}, {self.slope_layer_name}, {self.trav_layer_name})", throttle_duration_sec=5.0)
             return
             
         self.map_info = msg.info
         
         # Extract data
         multi_array = msg.data[layer_idx]
+        slope_array = msg.data[slope_idx]
+        trav_array = msg.data[trav_idx]
         
         # Use layout dimensions if available
         size_x = int(round(self.map_info.length_x / self.map_info.resolution))
@@ -181,6 +240,8 @@ class AStarPlanner(Node):
         # GridMap stores data in column-major order (Eigen default)
         # Using order='F' (Fortran-like) ensures X (rows) varies first, then Y (cols)
         self.map_data = np.array(multi_array.data, dtype=np.float32).reshape((size_x, size_y), order='F')
+        self.slope_data = np.array(slope_array.data, dtype=np.float32).reshape((size_x, size_y), order='F')
+        self.trav_data = np.array(trav_array.data, dtype=np.float32).reshape((size_x, size_y), order='F')
         
     def position_to_index(self, x, y):
         if self.map_info is None:
@@ -222,24 +283,32 @@ class AStarPlanner(Node):
         return 0 <= idx_x < self.map_data.shape[0] and 0 <= idx_y < self.map_data.shape[1]
         
     def is_obstacle(self, idx_x, idx_y):
+        # 检查高程层是否异常
         val = self.map_data[idx_x, idx_y]
         if np.isnan(val):
             return self.treat_nan_as_obstacle
-        return val > self.max_elevation
+        if val > self.max_elevation:
+            return True
+            
+        # 检查通行度层 (traversability == 0.0 表示不可通行)
+        if self.trav_data is not None:
+            trav = self.trav_data[idx_x, idx_y]
+            if np.isnan(trav) or trav <= 0.01:
+                return True
+                
+        return False
 
     def is_valid_move(self, curr_idx, next_idx):
-        # 获取当前点的z值
+        # 既然我们已经有了提前计算好的通行度层，这里只需验证通行度即可
+        # 如果通行度为 0，is_obstacle 已经被拦截了，这里可以做更精细的判断
+        
         val_curr = self.map_data[curr_idx[0], curr_idx[1]]
-        # 获取下一个点的z值
         val_next = self.map_data[next_idx[0], next_idx[1]]
         
         if np.isnan(val_curr) or np.isnan(val_next):
             return not self.treat_nan_as_obstacle
             
-        # 计算高度差
         dz = abs(val_next - val_curr)
-        
-        # Calculate 2D distance
         dx = next_idx[0] - curr_idx[0]
         dy = next_idx[1] - curr_idx[1]
         d_grid = math.hypot(dx, dy)
@@ -248,10 +317,17 @@ class AStarPlanner(Node):
         if d_meters == 0:
             return True
             
-        # Calculate slope angle in degrees
         slope_angle = math.degrees(math.atan2(dz, d_meters))
-        
-        return slope_angle <= self.max_slope_angle
+        if slope_angle > self.max_slope_angle:
+            return False
+            
+        # 使用通行度层判断
+        if self.trav_data is not None:
+            trav_next = self.trav_data[next_idx[0], next_idx[1]]
+            if np.isnan(trav_next) or trav_next <= 0.05:  # 设定一个极小的通行度阈值
+                return False
+            
+        return True
 
     def heuristic(self, a_idx, b_idx):
         # 3D Euclidean distance heuristic
@@ -352,7 +428,20 @@ class AStarPlanner(Node):
                 dz = abs(val_next - val_curr) if not (np.isnan(val_curr) or np.isnan(val_next)) else 0.0
                 d_grid = math.hypot(dx, dy)
                 d_meters = d_grid * self.map_info.resolution
-                move_cost = math.hypot(d_meters, dz)
+                
+                # 基础几何移动代价
+                base_move_cost = math.hypot(d_meters, dz)
+                
+                # 结合通行度层（Traversability Layer）计算惩罚代价
+                # traversability 范围是 [0, 1], 1 表示平坦，0 表示不可通行
+                if self.trav_data is not None:
+                    trav_next = self.trav_data[next_idx[0], next_idx[1]]
+                    # 当 trav_next 接近 0 时，惩罚增大
+                    penalty_weight = 2.0  # 惩罚权重，可根据需要调整
+                    trav_penalty = 1.0 + penalty_weight * (1.0 - max(0.01, float(trav_next) if not np.isnan(trav_next) else 0.01))
+                    move_cost = base_move_cost * trav_penalty
+                else:
+                    move_cost = base_move_cost
                 
                 new_cost = cost_so_far[current] + move_cost
                 
