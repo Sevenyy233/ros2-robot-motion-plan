@@ -18,6 +18,8 @@ public:
         this->declare_parameter<std::string>("traversability_layer_name", "traversability");
         this->declare_parameter<int>("hole_filling_radius", 2); // Radius for filling holes in grid (0 to disable)
         this->declare_parameter<double>("max_slope_angle", 45.0); // 最大允许坡度(度)
+        this->declare_parameter<double>("min_height", -10.0); // 最小有效高度，过滤掉过低的点
+        this->declare_parameter<double>("max_height", 2.0); // 最大有效高度，过滤掉过高的点(如屋顶)
 
         // Subscribers and Publishers
         sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -39,6 +41,8 @@ private:
         std::string layer_name = this->get_parameter("layer_name").as_string();
         std::string slope_layer_name = this->get_parameter("slope_layer_name").as_string();
         std::string trav_layer_name = this->get_parameter("traversability_layer_name").as_string();
+        double min_height = this->get_parameter("min_height").as_double();
+        double max_height = this->get_parameter("max_height").as_double();
 
         // Convert PointCloud2 to PCL PointCloud
         pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>());
@@ -59,10 +63,19 @@ private:
             if (std::isnan(point.x) || std::isnan(point.y) || std::isnan(point.z)) {
                 continue;
             }
+            // 过滤掉不在有效高度范围内的点（例如屋顶）
+            if (point.z < min_height || point.z > max_height) {
+                continue;
+            }
             if (point.x < min_x) min_x = point.x;
             if (point.x > max_x) max_x = point.x;
             if (point.y < min_y) min_y = point.y;
             if (point.y > max_y) max_y = point.y;
+        }
+
+        if (min_x > max_x || min_y > max_y) {
+            RCLCPP_WARN(this->get_logger(), "过滤后没有有效的点云数据!");
+            return;
         }
 
         // Add small margin to bounds
@@ -87,6 +100,11 @@ private:
         // Iterate through point cloud and update the GridMap layer
         for (const auto& point : cloud->points) {
             if (std::isnan(point.x) || std::isnan(point.y) || std::isnan(point.z)) {
+                continue;
+            }
+            
+            // 过滤掉不在有效高度范围内的点
+            if (point.z < min_height || point.z > max_height) {
                 continue;
             }
 

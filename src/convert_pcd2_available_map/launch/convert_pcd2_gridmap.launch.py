@@ -44,6 +44,8 @@ def generate_launch_description():
             {"use_sim_time": False},
             {"resolution": 0.1},
             {"hole_filling_radius": 2},
+            {"min_height": -10.0},
+            {"max_height": 2.0},
         ],
     )
 
