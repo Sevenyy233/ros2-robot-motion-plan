@@ -1,0 +1,323 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot name="whc" xmlns:xacro="http://ros.org/wiki/xacro">
+  
+  <!-- world -->
+  <link name="world"/>
+  <joint name="fixed_base_joint" type="fixed">
+    <parent link="world"/>
+    <child link="base_link"/>
+  </joint>
+
+  <!-- arm -->
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0.0 0.0 0.57" rpy="0 0 0"/>
+      <mass value="4252.0"/> 
+      <inertia
+        ixx="4016.5523" ixy="-4.901" ixz="-30.883"
+        iyy="3912.0301" iyz="2.0478" izz="7532.1244"/> 
+    </inertial>
+    
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://whc_description/meshes/base_link.STL"/>
+      </geometry>
+      <material name="gray"/>
+    </visual>
+    
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://whc_description/meshes/base_link.STL"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="link1">
+    <inertial>
+      <origin xyz="-0.3 0 -0.9" rpy="0 0 0" />
+      <mass value="329.029026667373" />
+      <inertia
+        ixx="30.265884234048"
+        ixy="-0.073592991562754"
+        ixz="-11.1888755102849"
+        iyy="293.340564525472"
+        iyz="-0.0204225769392412"
+        izz="315.087329803736" />
+    </inertial>
+    <visual> 
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://whc_description/meshes/PingTai.STL" />
+      </geometry>
+      <material name="gray"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://whc_description/meshes/PingTai.STL" />
+      </geometry>
+    </collision>
+  </link>
+  
+  <joint name="joint1" type="revolute">
+    <origin xyz="0 0 2.313" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="link1" />
+    <axis xyz="0 0 1" />
+    <limit lower="-2.618" upper="2.168" effort="100" velocity="5" />
+  </joint>
+   
+  <link name="link2">
+    <inertial>
+      <origin xyz="1.163 -0.067 0.000" rpy="0 0 0" />
+      <mass value="174.042" />
+      <inertia
+        ixx="12.724" ixy="-5.424" ixz="-0.060"
+        iyy="152.852" iyz="0.004" izz="149.370" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://whc_description/meshes/DaBi.STL" />
+      </geometry>
+      <material name="gray"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://whc_description/meshes/DaBi.STL" />
+      </geometry>
+    </collision>
+  </link>
+  
+  <joint name="joint2" type="revolute">
+    <origin xyz="1.65 0 0" rpy="-1.57 -2.76 0" />
+    <parent link="link1" />
+    <child link="link2" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.14" upper="3.14" effort="100" velocity="5" />
+  </joint>
+  
+  <link name="link3">
+    <inertial>
+      <origin xyz="1.19 -0.104 0" rpy="0 0 0" />
+      <mass value="173.65" />
+      <inertia
+        ixx="10.4997" ixy="-6.4192" ixz="-1.5167"
+        iyy="111.1078" iyz="0" izz="110.0485" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://whc_description/meshes/zhongbi.STL" />
+      </geometry>
+      <material name="gray"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://whc_description/meshes/zhongbi.STL" />
+      </geometry>
+    </collision>
+  </link>
+  
+  <joint name="joint3" type="revolute">
+    <origin xyz="2.5 0 0" rpy="0 0 2.72" />
+    <parent link="link2" />
+    <child link="link3" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.14" upper="3.14" effort="100" velocity="5" />
+  </joint>
+  
+  <link name="link4">
+    <inertial>
+      <origin xyz="-0.747 -0.400 0.058" rpy="0 0 0" />
+      <mass value="142.364" />
+      <inertia
+        ixx="15.4283" ixy="15.3540" ixz="-6.045"
+        iyy="153.4971" iyz="-1.9189" izz="162.7466" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://whc_description/meshes/xiaobi.STL" /> 
+      </geometry>
+      <material name="white"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://whc_description/meshes/xiaobi.STL" />  
+      </geometry>
+    </collision>
+  </link>
+  
+  <joint name="joint4" type="revolute">
+    <origin xyz="4.5 0 0" rpy="0 0 0.48" />
+    <parent link="link3" />
+    <child link="link4" />
+    <axis xyz="0 0 1" />
+    <limit lower="-1.57" upper="1.57" effort="100" velocity="5" />
+  </joint>
+   
+  <link name="link5">
+    <inertial>
+      <origin xyz="0.174 0 0" rpy="0 0 0" />
+      <mass value="94.441" />
+      <inertia
+        ixx="3.918" ixy="0.036" ixz="0.016"
+        iyy="7.31" iyz="0" izz="6.215" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://whc_description/meshes/R2.STL" />
+      </geometry>
+      <material name="gray"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://whc_description/meshes/R2.STL" />
+      </geometry>
+    </collision>
+  </link>
+  
+  <joint name="joint5" type="revolute">
+    <origin xyz="1.855 -0.239 0" rpy="1.5708 0 0" />
+    <parent link="link4" />
+    <child link="link5" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.14" upper="3.14" effort="100" velocity="5" />
+  </joint>
+ 
+  <link name="link6">
+    <inertial>
+      <origin xyz="0 0.159 0" rpy="0 0 0" />
+      <mass value="30" />
+      <inertia
+        ixx="1.176" ixy="0" ixz="0"
+        iyy="0.991" iyz="0.0008" izz="0.432" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://whc_description/meshes/R1.STL" />
+      </geometry>
+      <material name="gray"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://whc_description/meshes/R1.STL" />
+      </geometry>
+    </collision>
+  </link>
+  
+  <joint name="joint6" type="revolute">
+    <origin xyz="0.469 0 0" rpy="-1.5708 -1.5708 0" />
+    <parent link="link5" />
+    <child link="link6" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.14" upper="3.14" effort="100" velocity="3" />
+  </joint>
+   
+  <link name="link7">
+    <inertial>
+      <origin xyz="0 0.35 0.522" rpy="0 0 0" />
+      <mass value="67" />
+      <inertia
+        ixx="10.487" ixy="0" ixz="0"
+        iyy="46.749" iyz="4.09" izz="43.742" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://whc_description/meshes/candou.STL" />
+      </geometry>
+      <material name="gray"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://whc_description/meshes/candou.STL" />
+      </geometry>
+    </collision>
+  </link>
+  
+  <joint name="joint7" type="revolute">
+    <origin xyz="0 0.438 0" rpy="-1.5708 -1.5708 0" />
+    <parent link="link6" />
+    <child link="link7" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.14" upper="3.14" effort="100" velocity="3" />
+  </joint>
+
+  <!-- controller -->
+  <xacro:macro name="transmission_block" params="tran_name joint_name motor_name">
+    <transmission name="${tran_name}">
+      <type>transmission_interface/SimpleTransmission</type>
+      <joint name="${joint_name}">
+        <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface>
+      </joint>
+      <actuator name="${motor_name}">
+        <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface>
+        <mechanicalReduction>1</mechanicalReduction>
+      </actuator>
+    </transmission>
+  </xacro:macro>
+
+  <xacro:transmission_block tran_name="tran1" joint_name="joint1" motor_name="motor1"/>
+  <xacro:transmission_block tran_name="tran2" joint_name="joint2" motor_name="motor2"/>
+  <xacro:transmission_block tran_name="tran3" joint_name="joint3" motor_name="motor3"/>
+  <xacro:transmission_block tran_name="tran4" joint_name="joint4" motor_name="motor4"/>
+  <xacro:transmission_block tran_name="tran5" joint_name="joint5" motor_name="motor5"/>
+  <xacro:transmission_block tran_name="tran6" joint_name="joint6" motor_name="motor6"/>
+  <xacro:transmission_block tran_name="tran7" joint_name="joint7" motor_name="motor7"/>
+
+  <!-- gazebo -->
+  <gazebo>
+    <plugin name="gazebo_ros2_control" filename="libgazebo_ros2_control.so">
+      <robotNamespace>/whc</robotNamespace>
+      <parameters>$(find whc_gazebo)/config/ros2_controllers.yaml</parameters>
+      <legacyModeNS>true</legacyModeNS>
+    </plugin>
+  </gazebo>
+
+  <!-- 注释掉的Gazebo颜色配置 -->
+  <!-- 
+  <gazebo reference="base_link">
+    <material>Gazebo/Black</material>
+  </gazebo>
+
+  <gazebo reference="link1">
+    <material>Gazebo/White</material>
+  </gazebo>
+ 
+  <gazebo reference="link2">
+    <material>Gazebo/White</material>
+  </gazebo>
+
+  <gazebo reference="link3">
+    <material>Gazebo/White</material>
+  </gazebo>
+ 
+  <gazebo reference="link4">
+    <material>Gazebo/Black</material>
+  </gazebo>
+ 
+  <gazebo reference="link5">
+    <material>Gazebo/White</material>
+  </gazebo>
+ 
+  <gazebo reference="link6">
+    <material>Gazebo/White</material>
+  </gazebo>
+ 
+  <gazebo reference="link7">
+    <material>Gazebo/Orange</material>
+  </gazebo>
+  -->
+</robot>
