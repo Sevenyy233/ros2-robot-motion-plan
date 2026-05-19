@@ -12,11 +12,15 @@
 global_path_planner:
   ros__parameters:
     layer_name: "elevation"
+    slope_layer_name: "slope"
+    traversability_layer_name: "traversability"
     max_elevation: 1.0
     max_slope_angle: 45.0
     treat_nan_as_obstacle: True
     use_tf_for_start: True
     path_z_offset: 0.05
+    replan_period: 2.0  # 全局重规划周期(秒)
+    goal_tolerance: 0.5 # 目标点到达容差(米)
 
 # ============================================================
 # 示例：新规划器节点（取消注释即可使用）
