@@ -22,7 +22,6 @@ class TrackVelocityPublisher(Node):
         self.left_track_frame = self.get_parameter("left_track_frame").value
         self.right_track_frame = self.get_parameter("right_track_frame").value
 
-
         self.left_track_vel = None
         self.right_track_vel = None
 
@@ -49,7 +48,7 @@ class TrackVelocityPublisher(Node):
 
         self.get_logger().info("左右履带速度发布者启动,初始化成功")
 
-    def cmd_vel_callback(self, msg:TwistStamped):
+    def cmd_vel_callback(self, msg:TwistStamped):   
         # 提取目标线速度和角速度
         v = msg.twist.linear.x
         omega = msg.twist.angular.z
@@ -80,8 +79,13 @@ class TrackVelocityPublisher(Node):
         right_msg.twist.linear.x = v_right
         self.right_track_vel_pub.publish(right_msg)
 
-         # 打印左右履带速度
-        self.get_logger().info(f"左履带速度: {v_left:.4f} m/s, 右履带速度: {v_right:.4f} m/s")
+        # 如果速度不为 0 才打印速度
+        if v_left != 0.0 or v_right != 0.0:
+            # 打印左右履带速度
+            self.get_logger().info(f"左履带速度: {v_left:.4f} m/s, 右履带速度: {v_right:.4f} m/s")
+        # 如果速度均为 0 才打印机器人停止运动
+        elif v_left == 0.0 and v_right == 0.0:
+            self.get_logger().info("左右履带速度均为 0.0 m/s, 机器人已经停止运动")
 
 def main():
     rclpy.init()

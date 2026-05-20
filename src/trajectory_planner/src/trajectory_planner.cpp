@@ -7,7 +7,6 @@
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <tf2/LinearMath/Quaternion.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include "custom_motion_plan_msgs/msg/robot_trajectory.hpp"
 #include "trajectory_planner/cubic_spline.hpp"
 
@@ -132,10 +131,10 @@ private:
             double yaw = spline.calc_yaw(s);
             tf2::Quaternion q;
             q.setRPY(0, 0, yaw);
-            point.pose.orientation = tf2::toMsg(q);
-
-            // 3. 计算速度 (目前简化为恒定线速度，不考虑起点加速)
-            // 如果需要梯形加速，可以在这里根据 s 进行分段判断
+            point.pose.orientation.x = q.x();
+            point.pose.orientation.y = q.y();
+            point.pose.orientation.z = q.z();
+            point.pose.orientation.w = q.w();
             point.velocity.linear.x = target_speed_ * std::cos(yaw);
             point.velocity.linear.y = target_speed_ * std::sin(yaw);
 
