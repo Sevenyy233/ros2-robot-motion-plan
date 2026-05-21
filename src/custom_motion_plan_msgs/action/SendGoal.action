@@ -1,6 +1,5 @@
 # 请求(Request)
-builtin_interfaces/Time request_time    # 请求发起时间
-geometry_msgs/PoseStamped goal_pose     # 目标点位姿(位置+姿态)
+geometry_msgs/PoseStamped goal_pose     # 底盘目标点位姿(位置+姿态)
 
 ---
 # 返回结果(Result)

@@ -1,14 +1,16 @@
 import rclpy
-from rclpy.node import Node
-from rclpy.action import ActionServer
-from grid_map_msgs.msg import GridMap
-from nav_msgs.msg import Path
-from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
-import numpy as np
 import heapq
 import math
 import tf2_ros
-import asyncio
+import numpy as np
+import time
+from rclpy.node import Node
+from rclpy.action import ActionServer
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.callback_groups import ReentrantCallbackGroup
+from grid_map_msgs.msg import GridMap
+from nav_msgs.msg import Path
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 from custom_motion_plan_msgs.action import SendGoal
 
 class AStarPlanner(Node):
@@ -26,8 +28,10 @@ class AStarPlanner(Node):
         self.declare_parameter('base_frame', 'base_link')
         self.declare_parameter('map_frame', 'map')
         self.declare_parameter('path_z_offset', 0.05)  # Slight offset to prevent Z-fighting in RViz
-        self.declare_parameter('replan_period', 2.0)   # 全局重规划周期(秒)
+        self.declare_parameter('replan_check_period', 1.0)   # 检查路径是否失效的周期(秒)
         self.declare_parameter('goal_tolerance', 0.5)  # 目标点到达容差(米)
+        self.declare_parameter('path_check_lookahead', 5.0) # 向前检查路径失效的距离(米)
+        self.declare_parameter('robot_radius', 3.0)      # 机器人半径
         
         self.layer_name = self.get_parameter('layer_name').value
         self.slope_layer_name = self.get_parameter('slope_layer_name').value
@@ -39,9 +43,11 @@ class AStarPlanner(Node):
         self.base_frame = self.get_parameter('base_frame').value
         self.map_frame = self.get_parameter('map_frame').value
         self.path_z_offset = self.get_parameter('path_z_offset').value
-        self.replan_period = self.get_parameter('replan_period').value
+        self.replan_check_period = self.get_parameter('replan_check_period').value
         self.goal_tolerance = self.get_parameter('goal_tolerance').value
-        
+        self.path_check_lookahead = self.get_parameter('path_check_lookahead').value
+        self.robot_radius = self.get_parameter('robot_radius').value
+
         # State
         self.grid_map = None
         self.map_data = None # elevation
@@ -50,6 +56,7 @@ class AStarPlanner(Node):
         self.map_info = None
         self.start_pose = None
         self.goal_pose = None
+        self.first_path_msg = None # 第一次规划出来的路径
         self.is_navigating = False # 是否处于导航/重规划状态
         
         # 初始位置获取方式，从TF或/initialpose话题获取
@@ -82,34 +89,90 @@ class AStarPlanner(Node):
         # Cache for continuous publishing
         self.current_path_msg = None
         self.path_pub_timer = self.create_timer(0.5, self.path_pub_timer_callback) # Publish at 2Hz
-        
-        self.send_goal_server = ActionServer(
+
+        # 事件驱动重规划定时器（仅用于检查路径有效性）
+        self.replan_check_timer = self.create_timer(self.replan_check_period, self.check_path_validity_callback)
+
+        # Action Server 接收目标点
+        self.action_cb_group = ReentrantCallbackGroup()
+        self.action_server = ActionServer(
             self,
             SendGoal,
-            "/goal_check",
-            self.send_goal_callback
+            '/goal_check',
+            self.execute_callback,
+            callback_group=self.action_cb_group
         )
 
-        # 周期性重规划定时器
-        self.replan_timer = self.create_timer(self.replan_period, self.replan_timer_callback)
+        self.get_logger().info("A* 全局路径规划器初始化完成 (事件驱动重规划)")
 
-        self.get_logger().info("3D A* 全局路径规划器初始化完成 (支持动态重规划)")
-
-    def replan_timer_callback(self):
+    def check_path_validity_callback(self):
         if not self.is_navigating or self.goal_pose is None or self.start_pose is None:
             return
             
-        # 检查是否到达目标点
+        # 1. 检查是否到达目标点
         dx = self.start_pose.pose.position.x - self.goal_pose.pose.position.x
         dy = self.start_pose.pose.position.y - self.goal_pose.pose.position.y
         if math.hypot(dx, dy) < self.goal_tolerance:
-            self.get_logger().info("全局规划器：已到达目标点附近，停止重规划。")
+            self.get_logger().info("全局规划器：已到达目标点附近，停止导航。")
             self.is_navigating = False
             self.current_path_msg = None
             return
+
+        # 2. 如果当前没有有效路径，触发重规划
+        if self.current_path_msg is None or len(self.current_path_msg.poses) == 0:
+            self.get_logger().warn("全局规划器：当前无有效路径，触发重规划！")
+            self.plan_path()
+            return
             
-        self.get_logger().info("全局规划器：周期性重规划中...")
-        self.plan_path()
+        # 3. 检查当前已有路径在前方一段距离内是否被障碍物阻挡 (事件驱动核心)
+        if self.is_path_blocked():
+            self.get_logger().warn("全局规划器：检测到前方路径被障碍物阻挡，触发事件驱动重规划！")
+            self.plan_path()
+
+    def is_path_blocked(self):
+        """检查当前保存的全局路径是否在最新的地图上变得不可通行"""
+        if self.current_path_msg is None or self.map_data is None:
+            return False
+            
+        curr_x = self.start_pose.pose.position.x
+        curr_y = self.start_pose.pose.position.y
+        
+        # 找到机器人当前在路径上的最近点
+        closest_idx = 0
+        min_dist = float('inf')
+        for i, pose_stamped in enumerate(self.current_path_msg.poses):
+            px = pose_stamped.pose.position.x
+            py = pose_stamped.pose.position.y
+            dist = math.hypot(px - curr_x, py - curr_y)
+            if dist < min_dist:
+                min_dist = dist
+                closest_idx = i
+                
+        # 从最近点开始，向前方检查一定距离 (path_check_lookahead)
+        accumulated_dist = 0.0
+        for i in range(closest_idx, len(self.current_path_msg.poses)):
+            px = self.current_path_msg.poses[i].pose.position.x
+            py = self.current_path_msg.poses[i].pose.position.y
+            
+            if i > closest_idx:
+                prev_x = self.current_path_msg.poses[i-1].pose.position.x
+                prev_y = self.current_path_msg.poses[i-1].pose.position.y
+                accumulated_dist += math.hypot(px - prev_x, py - prev_y)
+                
+            # 只检查前方有限距离内的路况
+            if accumulated_dist > self.path_check_lookahead:
+                break
+                
+            # 将路径点坐标转为地图索引
+            idx = self.position_to_index(px, py)
+            if idx is None or not self.is_valid_index(idx[0], idx[1]):
+                continue
+                
+            # 检查该点在最新地图上是否变成了障碍物 (考虑高程和通行度)
+            if self.is_obstacle(idx[0], idx[1]):
+                return True
+                
+        return False
 
     def path_pub_timer_callback(self):
         if self.current_path_msg is not None:
@@ -148,56 +211,72 @@ class AStarPlanner(Node):
         self.get_logger().info(f"已接收目标位姿: x={msg.pose.position.x:.2f}, y={msg.pose.position.y:.2f}")
         self.plan_path()
 
-    async def send_goal_callback(self, goal_handle):
-        self.get_logger().info("接收到新的全局路径规划请求(Action)...")
+    def execute_callback(self, goal_handle):
+        self.get_logger().info('Action Server 收到目标点请求...')
         
-        request = goal_handle.request
-        self.goal_pose = request.goal_pose
+        # 1. 接收目标点并设置
+        self.goal_pose = goal_handle.request.goal_pose
         self.is_navigating = True
-        self.get_logger().info(f"Action已接收目标位姿: x={self.goal_pose.pose.position.x:.2f}, y={self.goal_pose.pose.position.y:.2f}")
         
-        # 立刻进行一次初始规划
-        success, error_code, message = self.plan_path()
+        initial_distance = 0.0
+        if self.start_pose and self.goal_pose:
+            dx = self.start_pose.pose.position.x - self.goal_pose.pose.position.x
+            dy = self.start_pose.pose.position.y - self.goal_pose.pose.position.y
+            initial_distance = math.hypot(dx, dy)
+
+        # 发送初始状态反馈
+        feedback_msg = SendGoal.Feedback()
+        feedback_msg.current_time = self.get_clock().now().to_msg()
+        feedback_msg.current_stage = 1 # STAGE_GLOBAL_PLANNING
+        goal_handle.publish_feedback(feedback_msg)
+        
+        # 2. 触发全局规划
+        success, error_code, msg = self.plan_path()
         if not success:
-            self.is_navigating = False
             goal_handle.abort()
             result = SendGoal.Result()
             result.success = False
             result.error_code = error_code
-            result.message = message
+            result.message = msg
+            result.finish_time = self.get_clock().now().to_msg()
             return result
             
-        # 循环等待直到到达目标点或被取消
+        self.get_logger().info('全局规划成功，开始监控到达状态...')
+        
+        # 3. 循环等待直到到达目标点 (在 check_path_validity_callback 中到达后会设置 is_navigating=False)
         while rclpy.ok() and self.is_navigating:
             if goal_handle.is_cancel_requested:
                 goal_handle.canceled()
                 self.is_navigating = False
                 self.current_path_msg = None
-                self.get_logger().info('全局规划 Action 被取消')
+                self.get_logger().info('目标点请求被取消')
                 result = SendGoal.Result()
                 result.success = False
-                result.message = "被取消"
+                result.error_code = 3 # 超时或被取消
+                result.message = "目标已取消"
+                result.finish_time = self.get_clock().now().to_msg()
                 return result
                 
-            # 发送反馈
-            feedback_msg = SendGoal.Feedback()
-            feedback_msg.current_stage = 1  # STAGE_GLOBAL_PLANNING
-            feedback_msg.current_time = self.get_clock().now().to_msg()
-            
-            if self.start_pose:
+            # 填充 feedback
+            if self.start_pose and self.goal_pose:
                 dx = self.start_pose.pose.position.x - self.goal_pose.pose.position.x
                 dy = self.start_pose.pose.position.y - self.goal_pose.pose.position.y
-                dist = math.hypot(dx, dy)
-                feedback_msg.distance_remaining = float(dist)
-            else:
-                feedback_msg.distance_remaining = 0.0
+                dist_rem = math.hypot(dx, dy)
                 
-            goal_handle.publish_feedback(feedback_msg)
+                feedback_msg.current_time = self.get_clock().now().to_msg()
+                feedback_msg.current_stage = 4 # STAGE_MOVING
+                feedback_msg.distance_remaining = float(dist_rem)
+                if initial_distance > 0:
+                    ratio = (initial_distance - dist_rem) / initial_distance
+                    feedback_msg.completion_ratio = float(max(0.0, min(1.0, ratio)))
+                else:
+                    feedback_msg.completion_ratio = 1.0
+                    
+                goal_handle.publish_feedback(feedback_msg)
+                
+            time.sleep(0.5)
             
-            # Action 本身不需要频繁循环，重规划由 replan_timer_callback 在后台定时执行
-            await asyncio.sleep(0.5)
-            
-        # 到达目标点，退出循环
+        # 成功到达目标点
         goal_handle.succeed()
         result = SendGoal.Result()
         result.success = True
@@ -466,8 +545,8 @@ class AStarPlanner(Node):
             current = came_from[current]
         path_indices.reverse()
         
-        # Smooth the path
-        smoothed_path = self.smooth_path(path_indices, weight_data=0.5, weight_smooth=0.2)
+        # Smooth the path using Bezier curve
+        smoothed_path = self.smooth_path_bezier(path_indices)
         
         end_time = self.get_clock().now()
         duration = (end_time - start_time).nanoseconds / 1e9
@@ -477,26 +556,46 @@ class AStarPlanner(Node):
         self.publish_path(smoothed_path)
         return True, 0, msg
         
-    def smooth_path(self, path_indices, weight_data=0.5, weight_smooth=0.1, tolerance=0.000001):
-        """Smooth the generated path using gradient descent."""
-        if len(path_indices) <= 2:
+    def smooth_path_bezier(self, path_indices, num_points=100):
+        """Smooth the generated path using a 3rd order Bezier curve (Cubic Bezier)."""
+        if len(path_indices) < 2:
             return path_indices
-
-        # Convert indices to continuous coordinates for smoothing
-        smoothed = []
-        for idx in path_indices:
-            smoothed.append(list(idx))
             
-        change = tolerance
-        while change >= tolerance:
-            change = 0.0
-            for i in range(1, len(path_indices) - 1):
-                for j in range(2): # x and y
-                    aux = smoothed[i][j]
-                    smoothed[i][j] += weight_data * (path_indices[i][j] - smoothed[i][j]) + \
-                                      weight_smooth * (smoothed[i-1][j] + smoothed[i+1][j] - (2.0 * smoothed[i][j]))
-                    change += abs(aux - smoothed[i][j])
-                    
+        # 如果路径点少于4个，我们可以通过插值补充，或者直接退化为简单的连线/低阶贝塞尔
+        # 这里为了确保是三阶贝塞尔，我们从原路径中提取4个控制点：起点、1/3点、2/3点、终点
+        p0 = path_indices[0]
+        p3 = path_indices[-1]
+        
+        if len(path_indices) == 2:
+            # 只有两个点，控制点均匀分布在两点连线上
+            p1 = (p0[0] + (p3[0]-p0[0])/3.0, p0[1] + (p3[1]-p0[1])/3.0)
+            p2 = (p0[0] + 2.0*(p3[0]-p0[0])/3.0, p0[1] + 2.0*(p3[1]-p0[1])/3.0)
+        elif len(path_indices) == 3:
+            p1 = path_indices[1]
+            p2 = path_indices[1] # 复用中间点
+        else:
+            idx1 = len(path_indices) // 3
+            idx2 = 2 * len(path_indices) // 3
+            p1 = path_indices[idx1]
+            p2 = path_indices[idx2]
+
+        smoothed = []
+        for i in range(num_points):
+            t = i / float(num_points - 1)
+            
+            # 三阶贝塞尔曲线公式: B(t) = (1-t)^3 * P0 + 3(1-t)^2 * t * P1 + 3(1-t) * t^2 * P2 + t^3 * P3
+            x = ((1 - t)**3 * p0[0] + 
+                 3 * (1 - t)**2 * t * p1[0] + 
+                 3 * (1 - t) * t**2 * p2[0] + 
+                 t**3 * p3[0])
+                 
+            y = ((1 - t)**3 * p0[1] + 
+                 3 * (1 - t)**2 * t * p1[1] + 
+                 3 * (1 - t) * t**2 * p2[1] + 
+                 t**3 * p3[1])
+                 
+            smoothed.append([x, y])
+            
         return smoothed
 
     def yaw_to_quaternion(self, yaw):
@@ -559,9 +658,18 @@ class AStarPlanner(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = AStarPlanner()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    
+    # 使用多线程执行器，以便Action Server中的time.sleep不会阻塞定时器和回调
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
+    
+    try:
+        executor.spin()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
