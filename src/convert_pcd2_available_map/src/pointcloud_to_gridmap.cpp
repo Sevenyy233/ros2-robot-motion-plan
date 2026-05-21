@@ -22,11 +22,10 @@ public:
         this->declare_parameter<double>("max_height", 2.0); // 最大有效高度，过滤掉过高的点(如屋顶)
 
         // Subscribers and Publishers
-        sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-            "map_points", 10,
+        map_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+            "/map_points", 10,
             std::bind(&PointCloudToGridMapNode::pointCloudCallback, this, std::placeholders::_1));
-            
-        pub_ = this->create_publisher<grid_map_msgs::msg::GridMap>("grid_map", 10);
+        grid_map_pub_ = this->create_publisher<grid_map_msgs::msg::GridMap>("grid_map", 10);
 
         // parameters_callback_handle_ = this->add_on_set_parameters_callback(
 
@@ -200,11 +199,11 @@ private:
         // Convert GridMap to ROS message and publish
         std::unique_ptr<grid_map_msgs::msg::GridMap> message;
         message = grid_map::GridMapRosConverter::toMessage(map);
-        pub_->publish(std::move(message));
+        grid_map_pub_->publish(std::move(message));
     }
 
-    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_;
-    rclcpp::Publisher<grid_map_msgs::msg::GridMap>::SharedPtr pub_; 
+    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr map_sub_;
+    rclcpp::Publisher<grid_map_msgs::msg::GridMap>::SharedPtr grid_map_pub_; 
     OnSetParametersCallbackHandle::SharedPtr parameters_callback_handle_;
 };
 

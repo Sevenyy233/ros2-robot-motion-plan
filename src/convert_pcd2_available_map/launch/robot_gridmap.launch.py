@@ -43,15 +43,25 @@ def generate_launch_description():
         package="tf2_ros",
         executable="static_transform_publisher",
         name="map_to_odom",
-        arguments=['0', '0', '0', '0', '0', '0', 'map', 'odom']
+        # 前三个坐标值为地图的原点坐标，改变可以平移，后三个为绕xyz轴的偏转角度
+        arguments=['9.0', '0', '0', '0', '0', '0', 'map', 'odom']
     )
 
+    # 4. 启动虚拟机器人节点：用于在 rviz 中显示机器人位置
+    # 以及发布机器人 odom->base_footprint 变换和odom话题
     dummy_robot_node = Node(
         package="convert_pcd2_available_map",
         executable="dummy_robot",
         name="dummy_robot",
         output="screen",
+        parameters=[
+            {"initial_x": -3.0},
+            {"initial_y": 0.0},
+            {"initial_theta": 0.0}
+        ]
     )
+
+    # 3和4两个节点在部署到实机上的时候需要删除
 
     rviz_node = Node(
         package="rviz2",

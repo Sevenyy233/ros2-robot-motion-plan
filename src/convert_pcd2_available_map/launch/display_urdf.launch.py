@@ -15,8 +15,8 @@ from launch_ros.parameter_descriptions import ParameterValue
 def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time', default='false')
 
-    robot_description_pkg = get_package_share_directory("robot_description")
-    robot_xacro_file = os.path.join(robot_description_pkg, "urdf", "rover.urdf.xacro")
+    robot_description_pkg = get_package_share_directory("whc_description")
+    robot_xacro_file = os.path.join(robot_description_pkg, "urdf", "whc_description_gazebo.xacro")
 
     robot_description = ParameterValue(Command(["xacro ", robot_xacro_file]), value_type=str)
     

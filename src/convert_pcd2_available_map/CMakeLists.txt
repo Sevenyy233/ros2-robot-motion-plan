@@ -19,6 +19,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(pcl_ros REQUIRED)
 find_package(octomap REQUIRED)
 find_package(octomap_msgs REQUIRED)
 
@@ -55,10 +56,25 @@ ament_target_dependencies(pointcloud_to_octomap
   grid_map_core
 )
 
+add_executable(combine_pointcloud_lidar src/combine_pointcloud_lidar.cpp)
+ament_target_dependencies(combine_pointcloud_lidar
+  rclcpp
+  sensor_msgs
+  pcl_conversions
+  tf2_ros
+  geometry_msgs
+  grid_map_ros
+  pcl_ros
+)
+target_link_libraries(combine_pointcloud_lidar
+  ${PCL_LIBRARIES}
+)
+
 install(TARGETS
   pointcloud_to_gridmap
   dummy_robot
   pointcloud_to_octomap
+  combine_pointcloud_lidar
   DESTINATION lib/${PROJECT_NAME}
 )
 

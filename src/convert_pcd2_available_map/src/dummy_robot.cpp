@@ -12,6 +12,15 @@ class DummyRobot : public rclcpp::Node
 public:
     DummyRobot() : Node("dummy_robot"), x_(0.0), y_(0.0), z_(0.0), roll_(0.0), pitch_(0.0), theta_(0.0)
     {
+        // 声明参数：初始位姿
+        this->declare_parameter("initial_x", 0.0);
+        this->declare_parameter("initial_y", 0.0);
+        this->declare_parameter("initial_theta", 0.0);
+
+        // 获取参数
+        x_ = this->get_parameter("initial_x").as_double();
+        y_ = this->get_parameter("initial_y").as_double();
+        theta_ = this->get_parameter("initial_theta").as_double();
         cmd_vel_sub_ = this->create_subscription<geometry_msgs::msg::TwistStamped>(
             "cmd_vel", 10, std::bind(&DummyRobot::cmdVelCallback,
                 this, std::placeholders::_1));
