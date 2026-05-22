@@ -252,7 +252,7 @@ class AStarPlanner(Node):
                 self.get_logger().info('目标点请求被取消')
                 result = SendGoal.Result()
                 result.success = False
-                result.error_code = 3 # 超时或被取消
+                result.error_code = 2 # 超时或被取消
                 result.message = "目标已取消"
                 result.finish_time = self.get_clock().now().to_msg()
                 return result
@@ -264,7 +264,7 @@ class AStarPlanner(Node):
                 dist_rem = math.hypot(dx, dy)
                 
                 feedback_msg.current_time = self.get_clock().now().to_msg()
-                feedback_msg.current_stage = 4 # STAGE_MOVING
+                feedback_msg.current_stage = 2 # STAGE_MOVING
                 feedback_msg.distance_remaining = float(dist_rem)
                 if initial_distance > 0:
                     ratio = (initial_distance - dist_rem) / initial_distance

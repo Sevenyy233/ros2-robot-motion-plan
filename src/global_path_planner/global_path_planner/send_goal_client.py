@@ -3,10 +3,7 @@ from rclpy.node import Node
 from rclpy.action import ActionClient
 from custom_motion_plan_msgs.action import SendGoal
 from geometry_msgs.msg import PoseStamped
-import threading
 import math
-
-import time
 
 class SendGoalClient(Node):
     def __init__(self):
@@ -26,9 +23,7 @@ class SendGoalClient(Node):
         self.stage_map = {
             0: "空闲 (IDLE)",
             1: "全局规划中 (GLOBAL_PLANNING)",
-            2: "局部规划中 (LOCAL_PLANNING)",
-            3: "轨迹规划中 (TRAJECTORY_PLANNING)",
-            4: "移动中 (MOVING)"
+            2: "移动中 (MOVING)"
         }
 
     def send_goal(self, x, y, yaw=0.0):
@@ -81,13 +76,21 @@ class SendGoalClient(Node):
         处理规划/运动过程中的实时反馈
         """
         feedback = feedback_msg.feedback
-        stage_str = self.stage_map.get(feedback.current_stage, f"未知阶段({feedback.current_stage})")
-        
-        self.get_logger().info(
-            f"[实时反馈] 阶段: {stage_str}, "
-            f"总进度: {feedback.completion_ratio * 100:.1f}%, "
-            f"剩余距离: {feedback.distance_remaining:.2f}m"
-        )
+        stage_code = feedback.current_stage
+        stage_str = self.stage_map.get(stage_code, f"未知阶段({stage_code})")
+
+        if stage_code == 0:
+            self.get_logger().info(f"[实时反馈] 阶段: {stage_str} - 机器人当前处于待机状态。")
+        elif stage_code == 1:
+            self.get_logger().info(f"[实时反馈] 阶段: {stage_str} - 正在计算到达目标的全局路径...")
+        elif stage_code == 2:
+            self.get_logger().info(
+                f"[实时反馈] 阶段: {stage_str}, "
+                f"总进度: {feedback.completion_ratio * 100:.1f}%, "
+                f"剩余距离: {feedback.distance_remaining:.2f}m"
+            )
+        else:
+            self.get_logger().warn(f"⚠️ 收到未知反馈阶段: {stage_code}")
 
     def get_result_callback(self, future):
         """
@@ -98,38 +101,44 @@ class SendGoalClient(Node):
             self.get_logger().info(f"✅ 成功到达目标点！耗时及结果信息: {result.message}")
         else:
             self.get_logger().warn(f"❌ 规划失败！错误码: {result.error_code}, 错误信息: {result.message}")
+            
+        # 收到结果后，通知退出
+        rclpy.shutdown()
 
 
 def main(args=None):
     rclpy.init(args=args)
     client_node = SendGoalClient()
     
-    # 在后台线程中运行 ROS 2 事件循环 (spin)，以便主线程可以接收持续的用户输入
-    spin_thread = threading.Thread(target=rclpy.spin, args=(client_node,), daemon=True)
-    spin_thread.start()
+    print("\n" + "="*50)
+    user_input = input("请输入目标点坐标和朝向(格式: x y [yaw]) 或输入 'q' 退出: ")
     
+    if user_input.strip().lower() == 'q':
+        client_node.destroy_node()
+        rclpy.shutdown()
+        return
+        
     try:
-        while rclpy.ok():
-            # 稍微等待一下，让后台线程的打印日志能够先输出，防止和input提示文字混叠
-            time.sleep(0.1)
-            print("\n" + "="*50)
-            user_input = input("请输入目标点坐标和朝向(格式: x y [yaw]) 或输入 'q' 退出: ")
-            
-            if user_input.strip().lower() == 'q':
-                break
-            
-            try:
-                parts = user_input.split()
-                if len(parts) >= 2:
-                    x = float(parts[0])
-                    y = float(parts[1])
-                    yaw = float(parts[2]) if len(parts) >= 3 else 0.0
-                    client_node.send_goal(x, y, yaw)
-                else:
-                    print("⚠️ 输入格式错误，请按照格式输入，例如: 5.0 2.5 或 5.0 2.5 1.57")
-            except ValueError:
-                print("⚠️ 无效的数字，请重新输入！")
-                
+        parts = user_input.split()
+        if len(parts) >= 2:
+            x = float(parts[0])
+            y = float(parts[1])
+            yaw = float(parts[2]) if len(parts) >= 3 else 0.0
+            client_node.send_goal(x, y, yaw)
+        else:
+            client_node.get_logger().warn("⚠️ 输入格式错误，请按照格式输入，例如: 5.0 2.5 或 5.0 2.5 1.57")
+            client_node.destroy_node()
+            rclpy.shutdown()
+            return
+    except ValueError:
+        client_node.get_logger().warn("⚠️ 无效的数字，请重新运行再试！请按照格式输入，例如: 5.0 2.5 或 5.0 2.5 1.57")
+        client_node.destroy_node()
+        rclpy.shutdown()
+        return
+        
+    try:
+        # 发送目标后，直接阻塞当前线程直到 get_result_callback 触发 rclpy.shutdown()
+        rclpy.spin(client_node)
     except KeyboardInterrupt:
         pass
     finally:
@@ -137,7 +146,6 @@ def main(args=None):
         if rclpy.ok():
             client_node.destroy_node()
             rclpy.shutdown()
-        spin_thread.join(timeout=1.0)
 
 if __name__ == "__main__":
     main()
