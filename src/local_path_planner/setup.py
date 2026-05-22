@@ -29,6 +29,8 @@ setup(
         'console_scripts': [
             'local_planner_node = local_path_planner.local_planner_node:main',
             'fake_lidar_points_pub = local_path_planner.fake_lidar_points_pub:main',
+            'new_local_planner = local_path_planner.new_local_planner:main',
+            'local_gridmap_node = local_path_planner.local_gridmap_node:main',
         ],
     },
 )
