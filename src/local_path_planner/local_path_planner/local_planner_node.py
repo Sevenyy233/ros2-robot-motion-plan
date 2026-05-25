@@ -27,6 +27,7 @@ class LocalPlannerNode(Node):
         self.declare_parameter("max_linear_speed", 0.5)
         self.declare_parameter("max_angular_speed", 1.0)
         self.declare_parameter("goal_tolerance", 0.15)
+        self.declare_parameter("yaw_tolerance", 0.087)  # approx 5 degrees
         self.declare_parameter("control_rate", 20.0)
         self.declare_parameter("local_path_lookahead", 3.0)
 
@@ -51,6 +52,7 @@ class LocalPlannerNode(Node):
         self.max_linear_speed = self.get_parameter("max_linear_speed").value
         self.max_angular_speed = self.get_parameter("max_angular_speed").value
         self.goal_tolerance = self.get_parameter("goal_tolerance").value
+        self.yaw_tolerance = self.get_parameter("yaw_tolerance").value
         self.control_rate = self.get_parameter("control_rate").value
         self.local_path_lookahead = self.get_parameter("local_path_lookahead").value
 
@@ -69,6 +71,7 @@ class LocalPlannerNode(Node):
         self.current_pose = None
         self.current_yaw = 0.0
         self.goal_reached = False
+        self.aligning_yaw = False
         self.avoidance_path = None
         self.latest_cloud_msg = None
         self.lidar_timestamp = None
@@ -393,8 +396,10 @@ class LocalPlannerNode(Node):
             dist = self.distance_xy((new_goal.x, new_goal.y), (old_goal.x, old_goal.y))
             if dist > 0.1:
                 self.goal_reached = False
+                self.aligning_yaw = False
         else:
             self.goal_reached = False
+            self.aligning_yaw = False
             
         self.global_path = msg
 
@@ -589,12 +594,40 @@ class LocalPlannerNode(Node):
 
         # Goal reached check
         if self.global_path is not None and goal_idx >= len(self.global_path.poses) - 1:
-            final_pt = self.global_path.poses[-1].pose.position
+            final_pose = self.global_path.poses[-1].pose
+            final_pt = final_pose.position
             if self.distance_xy((cx, cy), (final_pt.x, final_pt.y)) < self.goal_tolerance:
-                if not self.goal_reached:
-                    self.get_logger().info("已到达目标点！")
-                    self.goal_reached = True
-                return 0.0, 0.0
+                # 已到达 XY 位置，开始原地对齐朝向
+                q = final_pose.orientation
+                siny = 2.0 * (q.w * q.z + q.x * q.y)
+                cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+                final_yaw = math.atan2(siny, cosy)
+
+                yaw_diff = final_yaw - self.current_yaw
+                # 规范化角度到 [-pi, pi]
+                while yaw_diff > math.pi: yaw_diff -= 2 * math.pi
+                while yaw_diff < -math.pi: yaw_diff += 2 * math.pi
+
+                if abs(yaw_diff) < self.yaw_tolerance:
+                    if not self.goal_reached:
+                        self.get_logger().info("已到达目标点，且朝向已对齐！")
+                        self.goal_reached = True
+                    return 0.0, 0.0
+                else:
+                    if not self.aligning_yaw:
+                        self.get_logger().info("已到达目标点位置，正在原地旋转对齐朝向...")
+                        self.aligning_yaw = True
+                    
+                    # 仅发布角速度进行原地旋转
+                    angular_z_align = yaw_diff * 1.5  # P 控制器
+                    angular_z_align = max(-self.max_angular_speed, min(self.max_angular_speed, angular_z_align))
+                    
+                    # 保证最小旋转速度防止卡死
+                    min_w = 0.2
+                    if angular_z_align > 0 and angular_z_align < min_w: angular_z_align = min_w
+                    if angular_z_align < 0 and angular_z_align > -min_w: angular_z_align = -min_w
+                    
+                    return 0.0, angular_z_align
 
         return linear_x, angular_z
 
