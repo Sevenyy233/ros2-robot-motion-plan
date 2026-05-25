@@ -56,6 +56,18 @@ ament_target_dependencies(pointcloud_to_octomap
   grid_map_core
 )
 
+add_executable(pcd_to_pointcloud_node src/pcd_to_pointcloud_node.cpp)
+ament_target_dependencies(pcd_to_pointcloud_node
+  rclcpp
+  sensor_msgs
+  pcl_conversions
+  pcl_ros
+  grid_map_core
+)
+target_link_libraries(pcd_to_pointcloud_node
+  ${PCL_LIBRARIES}
+)
+
 add_executable(combine_pointcloud_lidar src/combine_pointcloud_lidar.cpp)
 ament_target_dependencies(combine_pointcloud_lidar
   rclcpp
@@ -75,6 +87,7 @@ install(TARGETS
   dummy_robot
   pointcloud_to_octomap
   combine_pointcloud_lidar
+  pcd_to_pointcloud_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -55,7 +55,7 @@ def generate_launch_description():
         name="dummy_robot",
         output="screen",
         parameters=[
-            {"initial_x": -3.0},
+            {"initial_x": -8.0},
             {"initial_y": 0.0},
             {"initial_theta": 0.0}
         ]

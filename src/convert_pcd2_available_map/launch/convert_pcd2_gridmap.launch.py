@@ -22,8 +22,8 @@ def generate_launch_description():
 
     # .pcd文件 -> PointCloud2消息 (作为静态底图)
     pcd_to_PointCloud_node = Node(
-        package="pcl_ros",
-        executable='pcd_to_pointcloud',
+        package="convert_pcd2_available_map",
+        executable='pcd_to_pointcloud_node',
         output='screen',
         parameters=[
             {"use_sim_time": False},
