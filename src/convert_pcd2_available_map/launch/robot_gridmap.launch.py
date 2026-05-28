@@ -44,7 +44,7 @@ def generate_launch_description():
         executable="static_transform_publisher",
         name="map_to_odom",
         # 前三个坐标值为地图的原点坐标，改变可以平移，后三个为绕xyz轴的偏转角度
-        arguments=['9.0', '0', '0', '0', '0', '0', 'map', 'odom']
+        arguments=['0.0', '0', '0', '0', '0', '0', 'map', 'odom']
     )
 
     # 4. 启动虚拟机器人节点：用于在 rviz 中显示机器人位置
@@ -55,7 +55,7 @@ def generate_launch_description():
         name="dummy_robot",
         output="screen",
         parameters=[
-            {"initial_x": -8.0},
+            {"initial_x": 0.0},
             {"initial_y": 0.0},
             {"initial_theta": 0.0}
         ]

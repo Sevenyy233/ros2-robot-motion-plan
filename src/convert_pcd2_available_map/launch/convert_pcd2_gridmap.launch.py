@@ -8,7 +8,7 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
     pcd_launch_arg = DeclareLaunchArgument(
         'pcd',
-        default_value='map',
+        default_value='rotate_ground',
         description='PCD文件名(不需要.pcd后缀,存放在convert_pcd2_available_map包的pcd目录下)'
     )
 

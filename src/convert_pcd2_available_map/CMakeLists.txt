@@ -14,6 +14,7 @@ find_package(grid_map_ros REQUIRED)
 find_package(grid_map_msgs REQUIRED)
 find_package(pcl_ros REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(PCL REQUIRED)
 find_package(pcl_conversions REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
@@ -54,7 +55,9 @@ ament_target_dependencies(pointcloud_to_octomap
   octomap_msgs
   pcl_conversions
   grid_map_core
+  PCL
 )
+target_link_libraries(pointcloud_to_octomap ${PCL_LIBRARIES})
 
 add_executable(pcd_to_pointcloud_node src/pcd_to_pointcloud_node.cpp)
 ament_target_dependencies(pcd_to_pointcloud_node
@@ -86,8 +89,8 @@ install(TARGETS
   pointcloud_to_gridmap
   dummy_robot
   pointcloud_to_octomap
-  combine_pointcloud_lidar
   pcd_to_pointcloud_node
+  combine_pointcloud_lidar
   DESTINATION lib/${PROJECT_NAME}
 )
 
