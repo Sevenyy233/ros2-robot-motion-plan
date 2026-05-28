@@ -4,6 +4,7 @@ import math
 import tf2_ros
 import numpy as np
 import time
+import scipy.ndimage as ndimage
 from rclpy.node import Node
 from rclpy.action import ActionServer
 from rclpy.executors import MultiThreadedExecutor
@@ -31,7 +32,9 @@ class AStarPlanner(Node):
         self.declare_parameter('replan_check_period', 1.0)   # 检查路径是否失效的周期(秒)
         self.declare_parameter('goal_tolerance', 0.5)  # 目标点到达容差(米)
         self.declare_parameter('path_check_lookahead', 5.0) # 向前检查路径失效的距离(米)
-        self.declare_parameter('robot_radius', 3.0)      # 机器人半径
+        self.declare_parameter('robot_radius', 3.0)      # 机器人的膨胀影响半径 (软约束代价范围)
+        self.declare_parameter('inscribed_radius', 1.8)  # 机器人的内切半宽 (硬约束，小于此距离不可通行)
+        self.declare_parameter('inflation_cost_factor', 5.0) # 膨胀代价系数
         
         self.layer_name = self.get_parameter('layer_name').value
         self.slope_layer_name = self.get_parameter('slope_layer_name').value
@@ -47,12 +50,16 @@ class AStarPlanner(Node):
         self.goal_tolerance = self.get_parameter('goal_tolerance').value
         self.path_check_lookahead = self.get_parameter('path_check_lookahead').value
         self.robot_radius = self.get_parameter('robot_radius').value
+        self.inscribed_radius = self.get_parameter('inscribed_radius').value
+        self.inflation_cost_factor = self.get_parameter('inflation_cost_factor').value
 
         # State
         self.grid_map = None
         self.map_data = None # elevation
         self.slope_data = None # slope
         self.trav_data = None # traversability
+        self.dist_data = None # distance to obstacle
+
         self.map_info = None
         self.start_pose = None
         self.goal_pose = None
@@ -322,6 +329,33 @@ class AStarPlanner(Node):
         self.slope_data = np.array(slope_array.data, dtype=np.float32).reshape((size_x, size_y), order='F')
         self.trav_data = np.array(trav_array.data, dtype=np.float32).reshape((size_x, size_y), order='F')
         
+        # --- 新增：计算到障碍物的距离场 (Distance Transform) ---
+        
+        # 构建二值障碍物图 (True 为自由空间，False 为障碍物)
+        free_space = np.ones_like(self.map_data, dtype=bool)
+        
+        # 1. 高程障碍
+        if self.treat_nan_as_obstacle:
+            free_space &= ~np.isnan(self.map_data)
+        
+        with np.errstate(invalid='ignore'):
+            free_space &= (self.map_data <= self.max_elevation)
+            
+        # 2. 通行度障碍
+        if self.trav_data is not None:
+            if self.treat_nan_as_obstacle:
+                free_space &= ~np.isnan(self.trav_data)
+            with np.errstate(invalid='ignore'):
+                free_space &= (self.trav_data > 0.01)
+                
+        # 3. 计算距离变换 (返回每个像素到最近的 False 像素的欧式距离，单位：网格数)
+        if np.any(~free_space):
+            # 乘以分辨率转换为米
+            self.dist_data = ndimage.distance_transform_edt(free_space) * self.map_info.resolution
+        else:
+            self.dist_data = np.full_like(self.map_data, float('inf'))
+
+        
     def position_to_index(self, x, y):
         if self.map_info is None:
             return None
@@ -373,6 +407,13 @@ class AStarPlanner(Node):
         if self.trav_data is not None:
             trav = self.trav_data[idx_x, idx_y]
             if np.isnan(trav) or trav <= 0.01:
+                return True
+                
+        # 检查是否小于机器人的最小通过宽度 (内切半径)
+        if self.dist_data is not None:
+            dist = self.dist_data[idx_x, idx_y]
+            # 如果到障碍物的距离小于机器人的内切半宽，直接视为硬碰撞
+            if dist < self.inscribed_radius:
                 return True
                 
         return False
@@ -513,14 +554,27 @@ class AStarPlanner(Node):
                 
                 # 结合通行度层（Traversability Layer）计算惩罚代价
                 # traversability 范围是 [0, 1], 1 表示平坦，0 表示不可通行
+                trav_penalty = 1.0
                 if self.trav_data is not None:
                     trav_next = self.trav_data[next_idx[0], next_idx[1]]
                     # 当 trav_next 接近 0 时，惩罚增大
                     penalty_weight = 2.0  # 惩罚权重，可根据需要调整
                     trav_penalty = 1.0 + penalty_weight * (1.0 - max(0.01, float(trav_next) if not np.isnan(trav_next) else 0.01))
-                    move_cost = base_move_cost * trav_penalty
-                else:
-                    move_cost = base_move_cost
+                    
+                # 结合障碍物距离场计算膨胀惩罚代价 (Soft constraint)
+                # 如果节点距离障碍物小于 robot_radius (膨胀影响半径)，但大于 inscribed_radius (硬碰撞)，
+                # 则添加一个代价，使得规划器尽量远离障碍物（走在走廊中间）。
+                inflation_penalty = 0.0
+                if self.dist_data is not None:
+                    dist = self.dist_data[next_idx[0], next_idx[1]]
+                    if dist < self.robot_radius:
+                        # 距离越近，代价越高。使用指数衰减或线性衰减
+                        # 这里使用线性衰减：在 inscribed_radius 处代价最大，在 robot_radius 处代价为 0
+                        cost_ratio = (self.robot_radius - dist) / (self.robot_radius - self.inscribed_radius + 0.001)
+                        inflation_penalty = self.inflation_cost_factor * max(0.0, cost_ratio)
+                        
+                # 总移动代价 = (基础代价 * 通行度惩罚) + 膨胀惩罚
+                move_cost = base_move_cost * trav_penalty + inflation_penalty * base_move_cost
                 
                 new_cost = cost_so_far[current] + move_cost
                 
