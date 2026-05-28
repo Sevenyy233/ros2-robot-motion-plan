@@ -59,7 +59,7 @@ class NewLocalPlannerNode(Node):
         # 控制循环
         self.timer = self.create_timer(0.1, self.plan_loop) # 10Hz
 
-        self.get_logger().info("启发式横向采样局部规划器初始化完成 (空间解耦版)")
+        self.get_logger().info("启发式横向采样局部规划器初始化完成!")
 
     def global_path_callback(self, msg):
         self.global_path = msg

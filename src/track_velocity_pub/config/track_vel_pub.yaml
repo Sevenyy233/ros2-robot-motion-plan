@@ -1,6 +1,0 @@
-ros__parameters:
-  track_length: 3.0
-  track_width: 0.35
-  track_wheel_separation_distance: 1.8
-  left_track_frame: "left_track_link"
-  right_track_frame: "right_track_link"
